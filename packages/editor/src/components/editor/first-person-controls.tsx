@@ -108,6 +108,19 @@ import {
 
 const CAMERA_EYE_OFFSET = 0.45
 const LOOK_SENSITIVITY = 0.002
+/**
+ * Smoothing for yaw and pitch: the camera approaches the target angle at this
+ * exponential rate per second. Higher = snappier; lower = smoother but laggy.
+ * 18 gives ~1-frame lag at 60fps while killing the browser's lock-acquisition
+ * spike entirely.  Set to a large number (e.g. 999) to disable.
+ */
+const LOOK_SMOOTH_RATE = 18
+/**
+ * Per-frame movement cap on raw mouse delta in pixels. The browser can deliver
+ * a very large first event when pointer lock is granted (accumulated motion
+ * while the cursor was free). Anything above this per axis is clamped.
+ */
+const MAX_MOUSE_DELTA_PX = 80
 // Drone mode: metres per second, and how hard Shift boosts it. The smoothing
 // constant is an exponential approach rate, not a linear acceleration.
 const DRONE_SPEED = 7
@@ -115,6 +128,39 @@ const DRONE_RUN_MULTIPLIER = 3
 const DRONE_SLOW_MULTIPLIER = 0.2
 const DRONE_SMOOTHING = 12
 const CONTROLLER_CENTER_FROM_EYE = 0.85
+
+/**
+ * Makes rooms feel larger in the walkthrough without touching the saved measurements. Every wall,
+ * floor, piece of furniture and ground slab hangs under the site object, and the colliders are built
+ * from world matrices, so scaling that one object enlarges the whole scene while the player keeps
+ * their size. 1 turns it off.
+ */
+const WALKTHROUGH_ROOM_SCALE = 1.4
+
+/**
+ * Applies the room scale to the site object. The site is looked up once and remembered, because this
+ * runs every frame and scanning the whole scene each time would create garbage and cause hitches.
+ */
+function createRoomScaler() {
+  let siteIds: string[] = []
+  return (scale: number) => {
+    if (siteIds.length === 0) {
+      siteIds = Object.values(useScene.getState().nodes)
+        .filter((node) => node.type === 'site')
+        .map((node) => node.id)
+    }
+    for (const id of siteIds) {
+      const object = sceneRegistry.nodes.get(id)
+      if (!object) {
+        siteIds = [] // the scene changed underneath us; look again next time
+        continue
+      }
+      if (object.scale.x === scale) continue
+      object.scale.setScalar(scale)
+      object.updateMatrixWorld(true)
+    }
+  }
+}
 const DOOR_INTERACTION_DISTANCE = 2.5
 const DOOR_LEAF_INTERACTION_DEPTH = 0.08
 const ELEVATOR_RIDE_HORIZONTAL_PADDING = 0.18
@@ -124,6 +170,10 @@ const ELEVATOR_COLLIDER_DOOR_DEPTH = 0.12
 const ELEVATOR_ENTRY_DOOR_OPEN_THRESHOLD = 0.72
 const VOID_FALL_RESPAWN_DEPTH = 12
 const HUD_LABEL_SAMPLE_FRAMES = 10
+/** The look-at check (doors, windows, elevators, items) raycasts the scene, so it runs every few frames. */
+const INTERACTION_SAMPLE_FRAMES = 3
+/** Door and window events within this window share one collider rebuild. */
+const COLLIDER_REBUILD_DELAY_MS = 120
 
 type MovementKeyName = Exclude<keyof MovementInput, 'joystick'>
 
@@ -190,6 +240,10 @@ const doorOpeningInverseMatrix = new Matrix4()
 const doorOpeningLocalHit = new Vector3()
 const doorOpeningLocalRay = new Ray()
 const doorOpeningMatrix = new Matrix4()
+// Scratch matrices for the door checks below, reused so nothing is allocated per frame.
+const scratchMatrixA = new Matrix4()
+const scratchMatrixB = new Matrix4()
+const scratchMatrixC = new Matrix4()
 const doorOpeningWorldHit = new Vector3()
 const elevatorLocalControllerPosition = new Vector3()
 const elevatorInteractionRaycaster = new Raycaster()
@@ -738,6 +792,13 @@ export const FirstPersonControls = () => {
   const pitchRef = useRef(0)
   const interactableTargetRef = useRef<FirstPersonInteractableTarget | null>(null)
   const hudLabelFrameRef = useRef(HUD_LABEL_SAMPLE_FRAMES - 1)
+  const interactionFrameRef = useRef(INTERACTION_SAMPLE_FRAMES)
+  const lastHudInteractRef = useRef('')
+  // Smoothed camera targets. The raw mouse events write to these; the frame
+  // loop lerps pitchRef/yawRef towards them so large lock-acquisition spikes
+  // never snap the camera.
+  const targetYawRef = useRef(0)
+  const targetPitchRef = useRef(0)
   const crouchKeyRef = useRef(false)
   const droneAscendKeyRef = useRef(false)
   const droneSlowKeyRef = useRef(false)
@@ -820,6 +881,24 @@ export const FirstPersonControls = () => {
     replaceElevatorColliderMeshes(buildElevatorColliderMeshes())
   }, [replaceColliderWorld, replaceElevatorColliderMeshes])
 
+  // A door or window finishing (or a scripted door changing) can fire several times in a row, and each
+  // rebuild walks the whole scene and rebuilds the BVH. Merge a burst into one rebuild.
+  const rebuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleColliderRebuild = useCallback(() => {
+    if (rebuildTimerRef.current !== null) return
+    rebuildTimerRef.current = setTimeout(() => {
+      rebuildTimerRef.current = null
+      rebuildColliderWorld()
+    }, COLLIDER_REBUILD_DELAY_MS)
+  }, [rebuildColliderWorld])
+  useEffect(
+    () => () => {
+      if (rebuildTimerRef.current !== null) clearTimeout(rebuildTimerRef.current)
+      rebuildTimerRef.current = null
+    },
+    [],
+  )
+
   const setElevatorRideLocked = useCallback((locked: boolean) => {
     if (rideLockedRef.current === locked) return
     rideLockedRef.current = locked
@@ -870,7 +949,7 @@ export const FirstPersonControls = () => {
       if (isOperationDoorType(node.doorType)) {
         doorOpeningMatrix
           .copy(object.matrixWorld)
-          .multiply(new Matrix4().makeTranslation(0, leafCenterY, 0))
+          .multiply(scratchMatrixA.makeTranslation(0, leafCenterY, 0))
         doorOpeningInverseMatrix.copy(doorOpeningMatrix).invert()
         doorOpeningBox.min.set(-leafW / 2, -leafH / 2, -DOOR_LEAF_INTERACTION_DEPTH / 2)
         doorOpeningBox.max.set(leafW / 2, leafH / 2, DOOR_LEAF_INTERACTION_DEPTH / 2)
@@ -909,9 +988,9 @@ export const FirstPersonControls = () => {
 
       doorLeafMatrix
         .copy(object.matrixWorld)
-        .multiply(new Matrix4().makeTranslation(hingeX, 0, 0))
-        .multiply(new Matrix4().makeRotationY(leafSwingRotation))
-        .multiply(new Matrix4().makeTranslation(-hingeX, leafCenterY, 0))
+        .multiply(scratchMatrixA.makeTranslation(hingeX, 0, 0))
+        .multiply(scratchMatrixB.makeRotationY(leafSwingRotation))
+        .multiply(scratchMatrixC.makeTranslation(-hingeX, leafCenterY, 0))
       doorLeafInverseMatrix.copy(doorLeafMatrix).invert()
       doorLeafBox.min.set(-leafW / 2, -leafH / 2, -DOOR_LEAF_INTERACTION_DEPTH / 2)
       doorLeafBox.max.set(leafW / 2, leafH / 2, DOOR_LEAF_INTERACTION_DEPTH / 2)
@@ -1258,6 +1337,13 @@ export const FirstPersonControls = () => {
     closeDoorOpenState(target.id, { persist: false })
   }, [isDroneMode, resolveInteractableTarget])
 
+  // Enlarge the room before the spawn point and the collider world read any world positions.
+  const setRoomScale = useMemo(createRoomScaler, [])
+  useMemo(() => setRoomScale(WALKTHROUGH_ROOM_SCALE), [setRoomScale])
+  // Something may re-apply the site's own transform; keep the scale in force, ahead of the player.
+  useFrame(() => setRoomScale(WALKTHROUGH_ROOM_SCALE), -1)
+  useEffect(() => () => setRoomScale(1), [setRoomScale])
+
   const placedSpawn = useMemo<FirstPersonSpawn | null>(() => {
     if (!(placedSpawnNode && placedSpawnNode.type === 'spawn')) return null
 
@@ -1279,9 +1365,9 @@ export const FirstPersonControls = () => {
 
     return {
       position: [
-        placedSpawnNode.position[0],
-        placedSpawnNode.position[1] + FIRST_PERSON_SPAWN_EYE_HEIGHT,
-        placedSpawnNode.position[2],
+        placedSpawnNode.position[0] * WALKTHROUGH_ROOM_SCALE,
+        placedSpawnNode.position[1] * WALKTHROUGH_ROOM_SCALE + FIRST_PERSON_SPAWN_EYE_HEIGHT,
+        placedSpawnNode.position[2] * WALKTHROUGH_ROOM_SCALE,
       ],
       yaw: placedSpawnNode.rotation,
     }
@@ -1305,16 +1391,16 @@ export const FirstPersonControls = () => {
 
   useEffect(() => {
     if (isDroneMode) return
-    emitter.on('door:animation-completed', rebuildColliderWorld)
-    emitter.on('window:animation-completed', rebuildColliderWorld)
+    emitter.on('door:animation-completed', scheduleColliderRebuild)
+    emitter.on('window:animation-completed', scheduleColliderRebuild)
     // A door built from a script opens by its model's clip, which reports no animation end.
-    const stopWatching = watchScriptedDoors(rebuildColliderWorld)
+    const stopWatching = watchScriptedDoors(scheduleColliderRebuild)
     return () => {
-      emitter.off('door:animation-completed', rebuildColliderWorld)
-      emitter.off('window:animation-completed', rebuildColliderWorld)
+      emitter.off('door:animation-completed', scheduleColliderRebuild)
+      emitter.off('window:animation-completed', scheduleColliderRebuild)
       stopWatching()
     }
-  }, [isDroneMode, rebuildColliderWorld])
+  }, [isDroneMode, scheduleColliderRebuild])
 
   // A walk session started before a drone detour would otherwise resume at its
   // original spawn; drop it so the next walk re-derives one.
@@ -1327,7 +1413,9 @@ export const FirstPersonControls = () => {
     if (!isDroneMode) return
     droneEuler.setFromQuaternion(camera.quaternion)
     yawRef.current = droneEuler.y
+    targetYawRef.current = droneEuler.y
     pitchRef.current = droneEuler.x
+    targetPitchRef.current = droneEuler.x
     droneVelocityRef.current.set(0, 0, 0)
 
     // Interaction prompts belong to walk; drop whatever its frame left behind.
@@ -1345,7 +1433,9 @@ export const FirstPersonControls = () => {
     const spawn = placedSpawn ?? deriveFirstPersonSpawn(camera, world)
     const [x, y, z] = spawn.position
     yawRef.current = spawn.yaw
+    targetYawRef.current = spawn.yaw
     pitchRef.current = 0
+    targetPitchRef.current = 0
     setControllerStart({
       position: [x, y - CONTROLLER_CENTER_FROM_EYE, z],
       yaw: spawn.yaw,
@@ -1386,10 +1476,14 @@ export const FirstPersonControls = () => {
         (useEditor.getState().firstPersonMovementMode === 'drone' && droneSlowKeyRef.current
           ? DRONE_SLOW_MULTIPLIER
           : 1)
-      yawRef.current -= e.movementX * lookSensitivity
-      pitchRef.current = Math.max(
+      // Clamp each axis to avoid the large accumulated-motion spike that the
+      // browser delivers on the first event after pointer lock is granted.
+      const dx = Math.max(-MAX_MOUSE_DELTA_PX, Math.min(MAX_MOUSE_DELTA_PX, e.movementX))
+      const dy = Math.max(-MAX_MOUSE_DELTA_PX, Math.min(MAX_MOUSE_DELTA_PX, e.movementY))
+      targetYawRef.current -= dx * lookSensitivity
+      targetPitchRef.current = Math.max(
         -(Math.PI / 2 - 0.05),
-        Math.min(Math.PI / 2 - 0.05, pitchRef.current - e.movementY * lookSensitivity),
+        Math.min(Math.PI / 2 - 0.05, targetPitchRef.current - dy * lookSensitivity),
       )
     }
 
@@ -1828,6 +1922,11 @@ export const FirstPersonControls = () => {
     const step = Math.min(delta, 0.1)
     const movement = movementInputRef.current
 
+    // Smooth the camera angles toward their targets.
+    const dStep = Math.min(delta, 0.1)
+    const dAlpha = 1 - Math.exp(-dStep * LOOK_SMOOTH_RATE)
+    yawRef.current += (targetYawRef.current - yawRef.current) * dAlpha
+    pitchRef.current += (targetPitchRef.current - pitchRef.current) * dAlpha
     droneEuler.set(pitchRef.current, yawRef.current, 0, 'YXZ')
     camera.quaternion.setFromEuler(droneEuler)
     droneForward.set(0, 0, -1).applyEuler(droneEuler)
@@ -1899,6 +1998,10 @@ export const FirstPersonControls = () => {
 
     group.rotation.y = 0
     camera.position.copy(group.position).add(cameraOffset)
+    // Smooth the camera angles toward their targets, independent of the physics step.
+    const lookAlpha = 1 - Math.exp(-Math.min(delta, 0.05) * LOOK_SMOOTH_RATE)
+    yawRef.current += (targetYawRef.current - yawRef.current) * lookAlpha
+    pitchRef.current += (targetPitchRef.current - pitchRef.current) * lookAlpha
     cameraEuler.set(pitchRef.current, yawRef.current, 0, 'YXZ')
     camera.quaternion.setFromEuler(cameraEuler)
     camera.updateMatrixWorld(true)
@@ -1906,24 +2009,33 @@ export const FirstPersonControls = () => {
     camera.position.copy(group.position).add(cameraOffset)
     camera.updateMatrixWorld(true)
 
-    const nextInteractableTarget = resolveInteractableTarget()
-    const previousInteractableTarget = interactableTargetRef.current
-    if (
-      getInteractableTargetKey(previousInteractableTarget) !==
-      getInteractableTargetKey(nextInteractableTarget)
-    ) {
-      interactableTargetRef.current = nextInteractableTarget
-      useViewer.getState().setHoveredId(nextInteractableTarget?.id ?? null)
-    }
+    interactionFrameRef.current += 1
+    if (interactionFrameRef.current >= INTERACTION_SAMPLE_FRAMES) {
+      interactionFrameRef.current = 0
+      const nextInteractableTarget = resolveInteractableTarget()
+      const previousInteractableTarget = interactableTargetRef.current
+      if (
+        getInteractableTargetKey(previousInteractableTarget) !==
+        getInteractableTargetKey(nextInteractableTarget)
+      ) {
+        interactableTargetRef.current = nextInteractableTarget
+        useViewer.getState().setHoveredId(nextInteractableTarget?.id ?? null)
+      }
 
-    useFirstPersonHud.getState().setHud({
-      interact: resolveHudInteract(nextInteractableTarget),
-    })
+      // Only touch the HUD store when the prompt actually changed.
+      const interact = resolveHudInteract(nextInteractableTarget)
+      const interactKey = JSON.stringify(interact)
+      if (interactKey !== lastHudInteractRef.current) {
+        lastHudInteractRef.current = interactKey
+        useFirstPersonHud.getState().setHud({ interact })
+      }
+    }
 
     hudLabelFrameRef.current += 1
     if (hudLabelFrameRef.current >= HUD_LABEL_SAMPLE_FRAMES) {
       hudLabelFrameRef.current = 0
       camera.getWorldPosition(hudWorldEyePosition)
+      hudWorldEyePosition.divideScalar(WALKTHROUGH_ROOM_SCALE)
       useFirstPersonHud.getState().setHud(resolveFirstPersonHudLabels(hudWorldEyePosition))
     }
   }, 2.5)

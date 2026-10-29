@@ -1,4 +1,4 @@
-import path from 'node:path'
+﻿import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NextConfig } from 'next'
 
@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
     ]
   },
   // MCP / package metadata returns `/editor/<id>` (hosted route). This open-source
-  // app serves saved projects at `/project/<id>` — redirect so links and bookmarks work.
+  // app serves saved projects at `/project/<id>` â€” redirect so links and bookmarks work.
   async redirects() {
     return [
       {
@@ -55,22 +55,6 @@ const nextConfig: NextConfig = {
   ],
   turbopack: {
     root: path.resolve(appDirectory, '../..'),
-    resolveAlias: {
-      '@pascal-app/core': './../../node_modules/@pascal-app/core',
-      '@pascal-app/editor': './../../node_modules/@pascal-app/editor',
-      '@pascal-app/viewer': './../../node_modules/@pascal-app/viewer',
-      '@pascal-app/nodes': './../../node_modules/@pascal-app/nodes',
-      react: './../../node_modules/react',
-      'react-dom': './../../node_modules/react-dom',
-      three: './../../node_modules/three',
-      '@react-three/fiber': './../../node_modules/@react-three/fiber',
-      '@react-three/drei': './../../node_modules/@react-three/drei',
-      '@react-three/xr': './../../node_modules/@react-three/xr',
-      zustand: './../../node_modules/zustand',
-      zod: './../../node_modules/zod',
-      iwer: './../../node_modules/iwer',
-      '@iwer/devui': './../../node_modules/@iwer/devui',
-    },
   },
   experimental: {
     serverActions: {

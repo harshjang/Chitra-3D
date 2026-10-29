@@ -76,6 +76,11 @@ function isColliderMaterialVisible(material: THREE.Material | THREE.Material[]) 
 
 function isGenericColliderNode(node: AnyNode) {
   if (node.visible === false) return false
+
+  // Scan nodes are in the `site` category, so include them only when their
+  // owner explicitly enables collision. Ordinary reference scans stay visual-only.
+  if (node.type === 'scan') return node.collisionEnabled
+
   if (DEDICATED_COLLIDER_NODE_TYPES.has(node.type)) return false
   const def = nodeRegistry.get(node.type)
   // Ceilings are a transparent mount surface for fixtures (lights, fans), not a

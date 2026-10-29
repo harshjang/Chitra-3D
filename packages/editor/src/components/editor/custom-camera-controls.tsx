@@ -1323,8 +1323,8 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
       // Use the longer horizontal extent to size the orbit radius so the whole
       // footprint sits in view regardless of aspect ratio.
       const maxExtent = Math.max(w, d)
-      const distance = Math.max(maxExtent * 1.4, 15)
-      const height = Math.max(maxExtent * 0.8, 10)
+      const distance = Math.max(maxExtent * 1.4, 3)
+      const height = Math.max(maxExtent * 0.8, 2.2)
       controls.current.setLookAt(
         cx + distance * 0.7,
         height + groundY,

@@ -13,6 +13,11 @@ interface SharedScene {
   graph: SceneGraph
 }
 
+type EmbedPageProps = {
+  params: Promise<{ id: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
+
 // Metadata and the page both need the scene; `cache` loads it once per request.
 const loadSharedScene = cache(async (id: string): Promise<SharedScene | null> => {
   // `isSceneShared` throws on an id that cannot be a scene; that is a 404 here, not a 500.
@@ -21,7 +26,7 @@ const loadSharedScene = cache(async (id: string): Promise<SharedScene | null> =>
   return (await operations.loadStoredScene(id)) as SharedScene | null
 })
 
-export async function generateMetadata({ params }: PageProps<'/embed/[id]'>): Promise<Metadata> {
+export async function generateMetadata({ params }: EmbedPageProps): Promise<Metadata> {
   const { id } = await params
   const scene = await loadSharedScene(id)
   return {
@@ -30,7 +35,7 @@ export async function generateMetadata({ params }: PageProps<'/embed/[id]'>): Pr
   }
 }
 
-export default async function EmbedPage({ params, searchParams }: PageProps<'/embed/[id]'>) {
+export default async function EmbedPage({ params, searchParams }: EmbedPageProps) {
   const [{ id }, { ui }] = await Promise.all([params, searchParams])
   const scene = await loadSharedScene(id)
   if (!scene) notFound()

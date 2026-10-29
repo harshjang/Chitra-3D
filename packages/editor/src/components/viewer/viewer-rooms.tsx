@@ -27,7 +27,6 @@ import {
   RoomPillsLayer3D,
   roomLabelEntries,
   roomLabelsVisible,
-  useFadePresence,
 } from '../editor/room-labels'
 
 /**
@@ -70,9 +69,6 @@ export function ViewerRooms({ source }: { source: ViewerSource }) {
       selectedTypes: selectedIds.map((id) => nodes[id]?.type),
     })
 
-  // The layer stays mounted through its fade-out, like the editor's.
-  const pillsPresent = useFadePresence(pillsShown)
-
   const rooms = useMemo(() => (levelId ? viewerRooms(levelId, nodes) : []), [levelId, nodes])
   const entries = useMemo(() => {
     if (!levelId) return []
@@ -106,34 +102,34 @@ export function ViewerRooms({ source }: { source: ViewerSource }) {
 
   return (
     <>
-      {pillsPresent && levelId ? (
-        <RoomPillsLayer3D
-          entries={entries}
-          // A level of its own: nothing open or placed on one floor carries to the next.
-          key={levelId}
-          levelObject={() => source.objectFor(levelId)}
-          renderDetail={(entry) => {
-            const zone = nodes[entry.zoneId]
-            if (zone?.type !== 'zone') return null
-            return (
-              <RoomPillDetail
-                areaM2={entry.area}
-                color={zone.color}
-                name={zoneLabel(zone)}
-                view="3d"
-                zoneId={zone.id}
-              />
-            )
-          }}
-          renderLabel={(entry, anchors, elements) => {
-            const zone = nodes[entry.zoneId]
-            if (zone?.type !== 'zone') return null
-            return (
-              <RoomLabelAnchor3D
-                anchors={anchors}
-                entry={entry}
-                floorY={roomFloorElevation(nodes as Record<string, AnyNode>, entry.zoneId)}
-              >
+      <RoomPillsLayer3D
+        entries={entries}
+        // Keep this layer stable across level changes: Drei's Html owns nested
+        // DOM roots, and synchronously unmounting them during an R3F update
+        // triggers React's cross-root unmount warning.
+        levelObject={() => (levelId ? source.objectFor(levelId) : undefined)}
+        renderDetail={(entry) => {
+          const zone = nodes[entry.zoneId]
+          if (zone?.type !== 'zone') return null
+          return (
+            <RoomPillDetail
+              areaM2={entry.area}
+              color={zone.color}
+              name={zoneLabel(zone)}
+              view="3d"
+              zoneId={zone.id}
+            />
+          )
+        }}
+        renderLabel={(entry, anchors, elements) => {
+          const zone = nodes[entry.zoneId]
+          return (
+            <RoomLabelAnchor3D
+              anchors={anchors}
+              entry={entry}
+              floorY={roomFloorElevation(nodes as Record<string, AnyNode>, entry.zoneId)}
+            >
+              {zone?.type === 'zone' ? (
                 <RoomPillChip
                   areaM2={entry.area}
                   color={zone.color}
@@ -148,12 +144,12 @@ export function ViewerRooms({ source }: { source: ViewerSource }) {
                   view="3d"
                   zoneId={zone.id}
                 />
-              </RoomLabelAnchor3D>
-            )
-          }}
-          shown={pillsShown}
-        />
-      ) : null}
+              ) : null}
+            </RoomLabelAnchor3D>
+          )
+        }}
+        shown={pillsShown}
+      />
       {highlighted.map((room) => (
         <ViewerRoomHighlight key={room.zoneId} room={room} source={source} />
       ))}

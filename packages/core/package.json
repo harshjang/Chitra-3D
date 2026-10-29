@@ -111,6 +111,21 @@
       "import": "./dist/agent-tools/index.js",
       "default": "./dist/agent-tools/index.js"
     },
+    "./photo-scene-inference": {
+      "types": "./dist/agent-operations/photo-scene-inference.d.ts",
+      "import": "./dist/agent-operations/photo-scene-inference.js",
+      "default": "./dist/agent-operations/photo-scene-inference.js"
+    },
+    "./photo-scene-vision-adapter": {
+      "types": "./dist/agent-operations/photo-scene-vision-adapter.d.ts",
+      "import": "./dist/agent-operations/photo-scene-vision-adapter.js",
+      "default": "./dist/agent-operations/photo-scene-vision-adapter.js"
+    },
+    "./gemini-photo-vision-provider": {
+      "types": "./dist/agent-operations/gemini-photo-vision-provider.d.ts",
+      "import": "./dist/agent-operations/gemini-photo-vision-provider.js",
+      "default": "./dist/agent-operations/gemini-photo-vision-provider.js"
+    },
     "./agent-operations": {
       "types": "./dist/agent-operations/index.d.ts",
       "import": "./dist/agent-operations/index.js",
