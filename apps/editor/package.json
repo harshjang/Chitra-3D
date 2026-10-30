@@ -12,7 +12,7 @@
     "test": "bun test lib"
   },
   "dependencies": {
-    "@iconify/react": "^6.0.2",
+    "@iconify/react": "^6.0.3",
     "@mint/pascal-plugin": "github:mintdotgg/mint-pascal-plugin#902c546dbaece6b31455c0dc394afe6b9cd136fe",
     "@number-flow/react": "^0.6.2",
     "@pascal-app/core": "*",
@@ -34,10 +34,10 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@webxr/plugin": "github:sudhir9297/webxr-pascal-plugin#9cd90457fc823d5d633d38e9575856c854aeb4d4",
     "clsx": "^2.1.1",
-    "geist": "^1.8.1",
-    "lucide-react": "^1.58.0",
-    "next": "16.4.2",
-    "postcss": "^8.5.30",
+    "geist": "^1.8.2",
+    "lucide-react": "^1.62.0",
+    "next": "16.4.3",
+    "postcss": "^8.5.32",
     "react": "19.3.1",
     "react-colorful": "^5.8.1",
     "react-dom": "19.3.1",

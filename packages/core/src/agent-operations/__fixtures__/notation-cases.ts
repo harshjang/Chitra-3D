@@ -327,6 +327,9 @@ export const NOTATION_CASES: NotationCase[] = [
  * pixels, so neither is listed; a length or an angle added as a bare number fails the test.
  */
 export const NOT_LENGTHS = new Set([
+  'author_scene.payload.levels[].lights[].intensity',
+  'author_scene.payload.levels[].lights[].softness',
+  'author_scene.payload.levels[].lights[].glow.strength',
   // Coordinates, in level metres.
   'add_column.x',
   'add_column.y',
@@ -359,5 +362,10 @@ export const NOT_LENGTHS = new Set([
   'create_roof.glazing.glassOpacity',
   'create_roof.glazing.glassRoughness',
   'paint.material.texture.scale',
+  'paint.material.texture.normalScale',
+  'paint.material.texture.bumpScale',
   'generate_studio_media.settings.durationSeconds',
+  // Design parameter values inherit their recipe's units, not one fixed physical length unit.
+  'place_design.parameters{}',
+  'validate_design.parameters{}',
 ])

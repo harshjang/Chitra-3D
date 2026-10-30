@@ -10,7 +10,15 @@ export {
 // Assembly layers (F2)
 export { Assembly, AssemblyLayer, AssemblyLayerId, LayerRole } from './assembly'
 // Asset URL allowlist
-export { ALLOWED_ORIGINS_ENV, ALLOWED_SCHEMES, AssetUrl } from './asset-url'
+export {
+  __resetAllowedOriginsCacheForTests,
+  ALLOWED_ORIGINS_ENV,
+  ALLOWED_SCHEMES,
+  type AllowedOriginIssue,
+  AssetUrl,
+  allowedOriginsFrom,
+  parseAllowedOrigins,
+} from './asset-url'
 export { BaseNode, generateId, Material, nodeType, objectId } from './base'
 // Camera
 export { CameraSchema } from './camera'
@@ -46,6 +54,8 @@ export {
   GeometryScriptParamValue,
   GeometryScriptSource,
   isGeometryScriptMimeType,
+  LightGlow,
+  LightSpot,
 } from './geometry-source'
 export type {
   MaterialMapProperties,
@@ -435,6 +445,7 @@ export {
   WallAssemblyInteriorFinish,
   WallAssemblySheathingMaterial,
   WallFaceRegion,
+  WallFaceScript,
   WallNode,
   WallTreatmentSide,
   WallTrimProfile,
@@ -445,7 +456,7 @@ export {
   WindowNode,
   WindowType,
 } from './nodes/window'
-export { ZoneNode } from './nodes/zone'
+export { ZoneFloorScript, ZoneNode } from './nodes/zone'
 // Typed source identity (D5)
 export {
   PROVENANCE_MAX_ID_BYTES,

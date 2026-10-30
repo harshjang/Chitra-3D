@@ -2,11 +2,21 @@
 // own shells on top of `@pascal-app/editor` (community-app, embedders)
 // don't have to learn three separate package imports. The canonical
 // definitions still live in `@pascal-app/core` / `@pascal-app/viewer`.
+import { registerCompiledMessages as registerEditorMessages } from '@pascal-app/core'
+import { messages as editorEnglishMessages } from './i18n/locales/en/messages'
+
+// Published-package consumers need compiled English too: Lingui cannot
+// interpolate a raw fallback literal in production. Other bundled locales
+// remain explicitly host-registered through `@pascal-app/editor/locales`.
+registerEditorMessages('en', '', editorEnglishMessages)
+
 export {
   type ApplySceneSnapshotOptions,
   acquireSceneReadOnlyLease,
   applyScenePatch,
   applySceneSnapshot,
+  type CompiledTranslationMessages,
+  createI18n,
   DEFAULT_CURVED_STAIR_INNER_RADIUS,
   DEFAULT_CURVED_STAIR_SWEEP_ANGLE,
   DEFAULT_SPIRAL_SHOW_CENTER_COLUMN,
@@ -22,6 +32,16 @@ export {
   DEFAULT_STAIR_THICKNESS,
   DEFAULT_STAIR_TYPE,
   DEFAULT_STAIR_WIDTH,
+  defaultI18n,
+  formatLength,
+  formatNumber,
+  getLocale,
+  normalizeDecimalInput,
+  type PascalI18n,
+  PascalI18nProvider,
+  parseLocalizedNumber,
+  registerCompiledMessages,
+  registerMessages,
   type SceneCommit,
   type SceneCommitListener,
   type SceneCommitOrigin,
@@ -29,7 +49,15 @@ export {
   type SceneNodePatch,
   type ScenePatch,
   type SceneSnapshot,
+  setLocale,
+  subscribe,
   subscribeSceneCommits,
+  type TranslationMessage,
+  type TranslationMessages,
+  type TranslationParams,
+  translate,
+  useLocale,
+  usePascalI18n,
   useScene,
 } from '@pascal-app/core'
 export { useViewer } from '@pascal-app/viewer'
@@ -68,6 +96,7 @@ export { FloatingActionMenu as FloatingMenu } from './components/editor/floating
 // flags. Tools place onto `useViewer.selection.levelId`, so the host must set a
 // building + level selection first.
 export { EDITOR_GRID_INPUT_NAME, Grid } from './components/editor/grid'
+export { Html as LocalizedHtml } from './components/editor/localized-html'
 export {
   DimensionPill,
   type DimensionPillPart,
@@ -275,6 +304,8 @@ export { applyMultiHeightMode } from './components/ui/panels/multi-height-mode'
 // a kind-owned panel and need PanelWrapper for the chrome.
 export { PanelWrapper } from './components/ui/panels/panel-wrapper'
 export { ParametricInspector as Inspector } from './components/ui/panels/parametric-inspector'
+// A floor's script (a room's, a slab's): its code to read and a way to take it off.
+export { ScriptedFinishRow } from './components/ui/panels/room-panel'
 export { ShapeChoice } from './components/ui/panels/shape-choice'
 export { WallPaintRegionList } from './components/ui/panels/wall-region-list'
 export { PALETTE_COLORS } from './components/ui/primitives/color-dot'
@@ -366,6 +397,18 @@ export { usePlacementNotice } from './hooks/use-placement-notice'
 export { useReducedMotion } from './hooks/use-reduced-motion'
 export { useSelectedRoom } from './hooks/use-selected-room'
 export { type Selection, useSelection } from './hooks/use-selection'
+export { localizedLevelName } from './i18n/level-name'
+export {
+  messageSlug,
+  nodeDescriptionDescriptor,
+  nodeLabel,
+  nodeLabelDescriptor,
+  toolHintChipLabel,
+  toolHintDescriptor,
+  toolHintKey,
+  toolHintLabel,
+} from './i18n/node-messages'
+export { sceneThemeName } from './i18n/scene-theme-name'
 export {
   clearPlacementSurface,
   getPlacementSurface,
@@ -579,6 +622,11 @@ export {
   storedScript,
 } from './lib/geometry-script/author'
 export { compileGeometryScriptInWorker } from './lib/geometry-script/client'
+export {
+  compileAndStoreFinishScript,
+  editorFinishScriptHost,
+  finishScriptCode,
+} from './lib/geometry-script/finish-scripts'
 export { exportSceneToGlb, type GlbExportOptions } from './lib/glb-export'
 export {
   type EditorGridEvent,
@@ -690,6 +738,7 @@ export {
   measurementFloorplanPresentationColor,
   measurementPresentationColor,
   metersToLinearUnit,
+  parseLinearMeasurementInput,
   squareMetersToAreaUnit,
 } from './lib/measurements'
 export type {
@@ -769,6 +818,7 @@ export { clearRoofDuplicateMetadata, duplicateRoofSubtree } from './lib/roof-dup
 // placement coordinator's roof-wall strategy.
 export { hasRoofFaceChildOverlap, type RoofWallHit, resolveRoofWallHit } from './lib/roof-wall-hit'
 export { WALL_PUSH_AFFORDANCE, type WallPushArrowPayload } from './lib/room-handle-drag'
+export { displayRoomName } from './lib/room-name-messages'
 export type { RoomKey, RoomSelectionRecord } from './lib/room-selection'
 export { popRoomSelection, selectRoom } from './lib/room-selection-commands'
 export {

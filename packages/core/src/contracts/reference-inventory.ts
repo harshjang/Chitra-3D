@@ -91,13 +91,21 @@ const MATERIAL_FIELDS = [
   'wallMaterial',
 ] as const
 
+/** A `MaterialSchema.texture`'s maps, each an asset URL. */
+const TEXTURE_MAPS = ['url', 'normalMap', 'bumpMap'] as const
+
+const textureRows = (material: string) =>
+  TEXTURE_MAPS.map((map) =>
+    row({
+      kind: '*',
+      path: `${material}.texture.${map}`,
+      ...policy('asset', 'content', 'freeze', 'keep'),
+      note: 'Texture by URL; a dangling URL renders the material without that map.',
+    }),
+  )
+
 const materialRows = MATERIAL_FIELDS.flatMap((field) => [
-  row({
-    kind: '*',
-    path: `${field}.texture.url`,
-    ...policy('asset', 'content', 'freeze', 'keep'),
-    note: 'Texture by URL; a dangling URL renders the untextured material.',
-  }),
+  ...textureRows(field),
   row({
     kind: '*',
     path: `${field}Preset`,
@@ -269,6 +277,14 @@ export const EXISTING_REFERENCES: readonly ExistingReference[] = [
     targetKinds: ['roof-segment'],
     dependents: ['hostRoofEdge', 'hostRoofEdgeRange', 'hostKind', 'hostHeightOffset'],
     remaps: CLONES,
+  }),
+  row({
+    kind: 'building',
+    path: 'groundLevelId',
+    ...policy('node', 'control', 'drop', 'keep'),
+    targetKinds: ['level'],
+    remaps: ['clone-scene-graph'],
+    note: 'The level at grade, the ground line of the stack. A level of another building, or a deleted one, is no ground level: the line is read off the elevations again (`groundLevelOf`).',
   }),
   row({
     kind: 'lean-to-extension',
@@ -594,13 +610,8 @@ export const EXISTING_REFERENCES: readonly ExistingReference[] = [
     note: 'Library material; `#rrggbb` values are literal colours.',
   }),
   ...materialRows,
-  ...(['legacyFaceMaterials.a', 'legacyFaceMaterials.b', 'foundation'] as const).map((prefix) =>
-    row({
-      kind: '*',
-      path: `${prefix}.material.texture.url`,
-      ...policy('asset', 'content', 'freeze', 'keep'),
-      note: 'Texture by URL; a dangling URL renders the untextured material.',
-    }),
+  ...(['legacyFaceMaterials.a', 'legacyFaceMaterials.b', 'foundation'] as const).flatMap((prefix) =>
+    textureRows(`${prefix}.material`),
   ),
   ...(['legacyFaceMaterials.a', 'legacyFaceMaterials.b'] as const).map((prefix) =>
     row({
@@ -745,30 +756,45 @@ export const NON_REFERENCES: readonly { kind: string; path: string; reason: stri
     reason: 'Inline versioned recipe (R7 stores recipes above 24 KiB by hash).',
   },
   { kind: 'procedural-item', path: 'parameters.@key', reason: 'Recipe parameter name.' },
-  // Scripted nodes (an authored item, or a window or door built from code) share one `source`.
-  ...(['item', 'window', 'door', 'column'] as const).flatMap((kind) => [
-    ...(
-      [
-        'source.manifest.anchors[].id',
-        'source.manifest.lights[].id',
-        'source.manifest.params[].id',
-        'source.manifest.parts[].id',
-        'source.manifest.slots[].id',
-      ] as const
-    ).map((path) => ({
+  // Scripted nodes (an authored item, or a window or door built from code) share one `source`;
+  // a room's floor script keeps the same record on its zone, a slab's surface script on its slab,
+  // a wall face's script on its wall.
+  ...(
+    [
+      ['item', 'source'],
+      ['window', 'source'],
+      ['door', 'source'],
+      ['column', 'source'],
+      ['zone', 'floor.script'],
+      ['slab', 'surfaceScript'],
+      ['wall', 'finishScripts.a'],
+      ['wall', 'finishScripts.b'],
+    ] as const
+  ).flatMap(([kind, source]) => [
+    ...(['anchors', 'lights', 'params', 'parts', 'slots'] as const).map((list) => ({
       kind,
-      path,
+      path: `${source}.manifest.${list}[].id`,
       reason: "Defines a key in a scripted node's compiled manifest, read from its script.",
     })),
-    { kind, path: 'source.params.@key', reason: 'Script parameter name.' },
-    { kind, path: 'source.params.*', reason: 'Script parameter value.' },
+    { kind, path: `${source}.params.@key`, reason: 'Script parameter name.' },
+    { kind, path: `${source}.params.*`, reason: 'Script parameter value.' },
     {
       kind,
-      path: 'source.images.thumbnail',
-      reason: 'Content hash of a project artifact, like source.artifact; forks carry it.',
+      path: `${source}.images.thumbnail`,
+      reason: `Content hash of a project artifact, like ${source}.artifact; forks carry it.`,
     },
   ]),
   { kind: 'scan', path: 'layers.@key', reason: 'Layer visibility flag name.' },
+  {
+    kind: 'site',
+    path: 'presentation.display.disciplines.@key',
+    reason: 'Discipline display filter names.',
+  },
+  {
+    kind: 'site',
+    path: 'presentation.display.families.@key',
+    reason: 'Family display filter names.',
+  },
   { kind: 'site', path: 'frontEdge', reason: "Index of the lot polygon's street-facing edge." },
   ...[
     'boundaries',
@@ -806,6 +832,30 @@ const meta = (path: string, r: Omit<Row, 'kind' | 'path'>) =>
   row({ kind: '*', path: `metadata.${path}`, ...r })
 
 export const METADATA_REFERENCES: readonly ExistingReference[] = [
+  meta('authorSceneState.buildingId', {
+    ...policy('node', 'internal', 'drop', 'strip'),
+    remaps: ['clone-scene-graph', 'clone-level-subtree'],
+    dependents: ['metadata.authorSceneState'],
+    note: 'The building that owns this conversion; a partial copy cannot overwrite its source building.',
+  }),
+  meta('authorSceneWritten.ids[]', {
+    ...policy('node', 'internal', 'drop', 'strip'),
+    remaps: ['clone-scene-graph', 'clone-level-subtree'],
+    dependents: ['metadata.authorSceneWritten'],
+    note: 'On an authored level: the nodes the last conversion wrote there, so the next revision can tell a node the person deleted from one it never made.',
+  }),
+  meta('authorSceneWritten.keys.*', {
+    ...policy('node', 'internal', 'drop', 'strip'),
+    remaps: ['clone-scene-graph', 'clone-level-subtree'],
+    dependents: ['metadata.authorSceneWritten'],
+    note: 'On an authored level: stable source-to-node identities, so a revision keeps the nodes the person already edited.',
+  }),
+  meta('authorSceneBase.id', {
+    ...policy('node', 'internal', 'drop', 'strip'),
+    remaps: ['clone-scene-graph', 'clone-level-subtree'],
+    dependents: ['metadata.authorSceneBase'],
+    note: "The node as the last conversion wrote it, the base of the next revision's three-way merge; whole graph clones remap the snapshot recursively.",
+  }),
   meta('managedByLeanTo', {
     ...policy('node', 'internal', 'cascade', 'strip'),
     targetKinds: ['lean-to-extension'],
@@ -919,6 +969,28 @@ const described = (reason: string, paths: readonly string[]) =>
 /** Metadata keys found in editor sources that are not references. */
 export const METADATA_NON_REFERENCES: readonly { path: string; reason: string }[] = [
   { path: 'metadata.roomBoundary', reason: 'Boolean opt-out from room boundary detection.' },
+  ...described(
+    "author_scene's provenance: the payload's own ids on walls and openings, a room's seed, a level's elevation, a slab's finish, a wall's colour, and on the building the stored payload's script hash, the payload items waiting for an add_object piece (by payload id and piece id) and when it was written; none of it names a node.",
+    [
+      'authorScene',
+      'authorScene.at',
+      'authorScene.color',
+      'authorScene.elevation',
+      'authorScene.finish',
+      'authorScene.id',
+      'authorScene.payload',
+      'authorScene.pending',
+      'authorScene.seed',
+    ],
+  ),
+  ...described(
+    "An artifact's kind as the MCP host stores it (item, window, door, column): artifact metadata, not a node's.",
+    ['kind'],
+  ),
+  ...described(
+    "The CLI's Architect API request metadata (`pascal architect run`): the project the turn targets and its credit cap, sent to the API, never stored on a node.",
+    ['pascal_max_credits', 'project_id'],
+  ),
   ...described('Flag, enum, number or tag; names nothing.', [
     'annotationObstacle',
     'annotationRole',
@@ -962,6 +1034,10 @@ export const METADATA_NON_REFERENCES: readonly { path: string; reason: string }[
     'storyShell',
     'suppressedDimensionSegmentIndexes',
   ]),
+  ...described(
+    "The site's hand-set code facts (Bones' `codeOverrides`: state, county, wind, snow…): numbers, flags and place names. Core reads only its `state`, to tell a US site from another, and names no node.",
+    ['codeOverrides'],
+  ),
   ...described('Read as a truthy flag only; no editor writer.', [
     'arrayModifier',
     'curvedWindowMaster',
@@ -1002,6 +1078,10 @@ export const METADATA_NON_REFERENCES: readonly { path: string; reason: string }[
   ]),
   ...described('Print-export artifact metadata, not scene-node metadata.', ['status']),
   ...described('Script build provenance metadata, not scene-node metadata.', ['mount']),
+  ...described(
+    'Architect run request metadata the CLI sends to and reads back from the Responses API (hosted project id, credit cap), not scene-node metadata.',
+    ['pascal_max_credits', 'project_id'],
+  ),
   ...described('Derived floorplan drawing metadata, not scene-node metadata.', [
     'at',
     'buildingId',
@@ -1010,6 +1090,10 @@ export const METADATA_NON_REFERENCES: readonly { path: string; reason: string }[
     'sitePlan',
     'textSizePt',
   ]),
+  ...described(
+    "A room's declaration of artificial light and mechanical ventilation (set_zone_intent): booleans, not ids.",
+    ['daylight'],
+  ),
   ...described('Site-plan facts kept on the node: values, not ids.', [
     'flatwork',
     'flatworkDims',

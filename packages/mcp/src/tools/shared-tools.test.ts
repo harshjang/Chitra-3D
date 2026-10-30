@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Client } from '@modelcontextprotocol/client'
+import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import type { AgentOperations } from '@pascal-app/core/agent-operations'
 import { type PluginAgentTools, refuse } from '@pascal-app/core/agent-tools'
 import { type AnyNodeId, BuildingNode, type Collection, LevelNode } from '@pascal-app/core/schema'
 import { createPascalMcpServer } from '@pascal-app/mcp/server'
 import { z } from 'zod'
 import { AGENT_TOOL_CASES } from '../../../core/src/agent-operations/__fixtures__/cases'
+import { CATALOG_BRIEF } from '../../../core/src/agent-operations/__fixtures__/design-brief-cases'
 import { SceneBridge } from '../bridge/scene-bridge'
 import { createSceneOperations } from '../operations'
 import { ADDITIVE_TOOL_ANNOTATIONS } from './annotations'
 import { type AssetCatalog, builtInCatalog } from './asset-catalog'
-import { registerOperationTool, registerSharedTools } from './shared-tools'
+import { type PlanReadingHosts, registerOperationTool, registerSharedTools } from './shared-tools'
 
 // Layer 2 of 3: the MCP tools, through a real client, on every shared tool's edge cases.
 type Result = {
@@ -79,6 +79,7 @@ describe('shared tools over MCP', () => {
   let catalog: AssetCatalog = builtInCatalog
   // The floor the host's person views for the case at hand; none, as on the remote MCP.
   let viewed: string | null = null
+  const hosts: PlanReadingHosts = {}
 
   beforeEach(async () => {
     bridge = new SceneBridge()
@@ -87,6 +88,7 @@ describe('shared tools over MCP', () => {
       server,
       createSceneOperations({ bridge, activeLevelId: () => viewed }),
       () => catalog(),
+      hosts,
     )
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
     client = new Client({ name: 'test-client', version: '0.0.0' })
@@ -99,11 +101,20 @@ describe('shared tools over MCP', () => {
     test(`${c.tool}: ${c.name}`, async () => {
       const { nodes, rootNodeIds } = c.scene()
       bridge.setScene(nodes as never, rootNodeIds as never)
+      const designBrief =
+        c.context?.designBrief === undefined ? CATALOG_BRIEF : (c.context.designBrief ?? undefined)
+      bridge.agentSession.replace({
+        ...(c.context?.session?.() ?? { checkpoints: {}, made: [] }),
+        ...(designBrief ? { designBrief } : {}),
+      })
       const own = c.context?.catalog
       catalog = own ? async () => own : builtInCatalog
+      // Catalog facts supplied by each shared case; nothing is fetched.
+      hosts.assetViews = async () => c.context?.assetViews ?? {}
       viewed = c.context?.activeLevelId ?? null
       const result = (await client.callTool({ name: c.tool, arguments: c.input })) as Result
-      const payload = JSON.parse(result.content[0]!.text) as Record<string, unknown>
+      const payload =
+        result.structuredContent ?? (JSON.parse(result.content[0]!.text) as Record<string, unknown>)
       if ('refusal' in c.expect) {
         expect(result.isError).toBe(true)
         expect(payload.code).toBe(c.expect.refusal)
@@ -111,6 +122,7 @@ describe('shared tools over MCP', () => {
         return
       }
       expect(result.isError).toBeFalsy()
+      expect(c.expect.session?.(bridge.agentSession.read()) ?? []).toEqual([])
       expect(payload).toMatchObject(c.expect.result)
       for (const id of c.expect.present ?? []) expect(bridge.getNode(id as AnyNodeId)).toBeTruthy()
       for (const id of c.expect.absent ?? []) expect(bridge.getNode(id as AnyNodeId)).toBeFalsy()

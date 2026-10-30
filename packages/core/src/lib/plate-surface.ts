@@ -224,6 +224,7 @@ function zoneSignature(zones: readonly ZoneNode[]): string {
       zone.polygon,
       zone.holes,
       zone.floor?.finish ?? null,
+      zone.floor?.script !== undefined,
       zone.floorStepFinish,
       zone.floorStepOverrides ?? null,
       zone.floorEdgeFinish,
@@ -483,7 +484,8 @@ function partitionTop(
   for (const zone of zones) {
     const clear = clearByZone.get(zone.id)
     const finish = zone.floor?.finish
-    if (!clear || (finish === undefined && !plate.plateRole)) continue
+    // A scripted floor is the room's own cell, so a hit on it names the room its script belongs to.
+    if (!clear || (finish === undefined && !zone.floor?.script && !plate.plateRole)) continue
     candidates.push({ role: roomFinishRole(zone.id), finish, polygons: clear })
   }
 
@@ -789,7 +791,14 @@ function classifySides(
             ],
       )
     const role = adjacent || neighbour ? ('riser' as const) : ('edge' as const)
-    const owner = role === 'riser' || plate.plateRole !== 'base' ? ownerId : undefined
+    // A base plate's side facing into one of its own holes (a void, a stairwell) belongs to the
+    // room around the hole, so it can wear that room's floor edge rather than the facade's.
+    const holeOwner =
+      plate.plateRole === 'base' &&
+      top.some(({ outer }) => containsPoint([{ outer, holes: [] }], outside))
+        ? zones.find((entry) => containsPoint(entry.polygon, inside))?.zone.id
+        : undefined
+    const owner = role === 'riser' || plate.plateRole !== 'base' ? ownerId : holeOwner
     // A door jamb's side of the step meets the aperture only at its edge, so
     // the doorway is looked for on both sides of the face too.
     const doorway =

@@ -6,6 +6,7 @@ import {
   bakePolicyOf,
   containsPoint,
   distanceToBoundary,
+  EXPLODED_GAP,
   itemInteraction,
   itemPrompt,
   operateItem,
@@ -33,9 +34,6 @@ import { GlbInteractive, type GlbInteractiveItem } from './glb-interactive'
 import { bakedLoopMechanisms } from './glb-mechanisms'
 import { GlbReferenceNodes } from './glb-reference-nodes'
 import { GlbReplaceInstances } from './glb-replace-instances'
-
-/** Vertical gap added per floor in `exploded` level mode (matches LevelSystem). */
-const EXPLODED_GAP = 5
 
 /** Baked `kind` → surface role, so monochrome can recolor by role like the
  *  parametric viewer (textures-off collapses each face to its themed clay). */
@@ -476,8 +474,6 @@ export function GlbScene({
       levelsWithZones: new Set(zoneList.map((zone) => zone.levelId)),
     }
   }, [gltf.scene])
-  // Level pascalIds bottom-to-top, for the interactive light pool's level factor.
-  const levelOrder = useMemo(() => levels.map((entry) => entry.id), [levels])
   // Loop clips no other controller plays (a plugin kind's mechanism) run on
   // click and E. As in the editor they start stopped and never persist.
   const loopMechanisms = useMemo(
@@ -1015,7 +1011,6 @@ export function GlbScene({
           actions={actions}
           identity={identity}
           items={interactiveItems}
-          levelOrder={levelOrder}
           zones={zoneEntries}
         />
       ) : null}

@@ -113,6 +113,7 @@ export {
   type WallConstructionResolution,
 } from './hooks/spatial-grid/support-host-patch'
 export { useSpatialQuery } from './hooks/spatial-grid/use-spatial-query'
+export * from './i18n'
 export { createAngleAccumulator } from './lib/angle-accumulator'
 export {
   ARTIFACT_URL_PREFIX,
@@ -131,6 +132,14 @@ export {
   resolveAssemblyStack,
 } from './lib/assembly-stack'
 export { loadAssetUrl, saveAsset } from './lib/asset-storage'
+export {
+  belowGradeFloorY,
+  belowGradeFootprints,
+  coveredBelowGradeFootprints,
+  GROUND_PIT_FLOOR_DROP,
+  GROUND_PIT_PLATE_CLEARANCE,
+  groundPitFloorY,
+} from './lib/below-grade-footprints'
 export {
   footprintOutline,
   levelFootprintLoops,
@@ -158,6 +167,7 @@ export {
 } from './lib/corner-snap'
 export { criticallyDamped } from './lib/critically-damped'
 export { isCutterName, resolveCutterHost } from './lib/cutter-host'
+export { deepestDrawnY, lowestGroundY } from './lib/deepest-drawn'
 export {
   clampDoorOperationState,
   getDoorRenderOpenAmount,
@@ -165,8 +175,22 @@ export {
   isOperationDoorType,
   SECTIONAL_GARAGE_RENDER_OPEN_SCALE,
 } from './lib/door-operation'
+export {
+  type FinishScriptHost,
+  type FinishScriptInputs,
+  type FinishScriptRefresh,
+  type FinishScriptTarget,
+  finishScriptWrites,
+  refreshFinishScripts,
+  type StaleFinishScript,
+  staleFinishScripts,
+} from './lib/finish-script'
 export { floorConstructionLift, liftedManualSlab } from './lib/floor-construction-lift'
-export { floorFootprintName } from './lib/floor-footprint-name'
+export {
+  type FloorFootprintNaming,
+  floorFootprintName,
+  floorFootprintNaming,
+} from './lib/floor-footprint-name'
 export {
   automaticFloorHeight,
   floorFootprintSupportClass,
@@ -189,7 +213,22 @@ export {
   floorOpeningTargets,
   openingsForSurface,
 } from './lib/floor-opening-intent'
-export { type FloorPlatePaintRefusal, floorPlatePaintRefusal } from './lib/floor-plate-paint'
+export {
+  type FloorPlatePaintRefusal,
+  floorPlatePaintRefusal,
+  floorScriptPaintRefusal,
+  slabSurfaceScriptPaintRefusal,
+} from './lib/floor-plate-paint'
+export {
+  FLOOR_SCRIPT_LIFT,
+  type FloorScriptInputs,
+  floorScriptInputs,
+  floorScriptInputsKey,
+  floorScriptRecord,
+  floorScriptSurface,
+  slabScriptSurface,
+  slabSurfaceScriptInputs,
+} from './lib/floor-script'
 export {
   type FloorStepOverride,
   floorStepOverrideFor,
@@ -202,10 +241,23 @@ export {
   withoutFloorStepOverrideKeys,
 } from './lib/floor-step-finish'
 export {
+  FOUNDATION_CONSTRUCTIONS,
+  type FoundationConstruction,
+  type FoundationConstructionId,
+  type FoundationReading,
+  type FoundationRegionId,
+  foundationReadingOf,
+  foundationRegionOf,
+} from './lib/foundation-construction'
+export { FOUNDATION_STANDARD } from './lib/foundation-standard'
+export { type FoundationMember, genericFoundation } from './lib/generic-foundation'
+export {
   ceilingSeatY,
   isScriptedNode,
   matchScriptSlotsToLibrary,
+  rebuiltInteractive,
   type ScriptedNode,
+  scriptedInteractive,
   scriptedObjectMeta,
   scriptedOrigin,
   scriptedSize,
@@ -222,6 +274,22 @@ export {
   nearestPointIn,
   resettledPosition,
 } from './lib/geometry-surfaces'
+export { type LevelGradeStanding, levelGradeStanding } from './lib/grade-standing'
+export { type GroundLevel, groundLevelOf, levelUnderNamedGround } from './lib/ground-level'
+export {
+  GROUND_FLOOR_ABOVE_GRADE,
+  GROUND_SEAT_TOLERANCE,
+  type GroundSeat,
+  gradeUnderLevel,
+  groundSeat,
+} from './lib/ground-seat'
+export {
+  buildingGroundBox,
+  type GroundBox,
+  levelGroundBox,
+  levelStackGroundBox,
+  terrainBetweenEyeAndBox,
+} from './lib/ground-window'
 export {
   type ExposedInterval,
   exposedIntervals,
@@ -263,6 +331,12 @@ export {
   openingDatumFromSupport,
   wallSupportForNodes,
 } from './lib/opening-floor-datum'
+export {
+  isAutoFrameDepth,
+  OPENING_FRAME_LIP,
+  resolveHostedOpeningFrameDepth,
+  resolveOpeningFrameDepth,
+} from './lib/opening-frame-depth'
 export {
   classifyPlateSideAt,
   clearPlateSurfaceCaches,
@@ -377,6 +451,7 @@ export {
   type YardDimension,
   type YardSide,
 } from './lib/setback-envelope'
+export { FLAT_GROUND_Y, groundHeightAt } from './lib/site-ground-height'
 export {
   type BuildableArea,
   type BuildingPlacement,
@@ -524,6 +599,18 @@ export {
   type WallSegment,
   type WallSegmentClosest,
 } from './lib/wall-distance'
+export {
+  type WallFacePaintRefusal,
+  type WallFaceRect,
+  type WallFaceScriptInputs,
+  wallFaceBaseOffset,
+  wallFaceScriptInputs,
+  wallFaceScriptInputsKey,
+  wallFaceScriptPaintRefusal,
+  wallFaceScriptPlacement,
+  wallFaceScriptRecord,
+  wallFaceScriptSkirtingGap,
+} from './lib/wall-face-script'
 export { ZONE_COLOR_PALETTE, zoneColorForSeed } from './lib/zone-colors'
 export {
   deriveZoneQuantityReport,
@@ -595,6 +682,7 @@ export {
   type DerivedWriteOperation,
   derivedDeletionIntent,
   derivedFieldViolations,
+  filterDerivedNodeWrites,
   isDerivedNode,
 } from './store/derived-node-guard'
 export {
@@ -865,6 +953,7 @@ export {
   BRICK_VENEER,
   CMU_8_ACTUAL,
   calculateLevelLayerMiters,
+  type ExposedStructure,
   FIBER_CEMENT,
   FURRING_1X,
   GYPSUM_FIVE_EIGHTHS,
@@ -889,6 +978,7 @@ export {
   type WallLayerMiterData,
   type WallLayerPolyline,
   WSP_SHEATHING,
+  wallAssemblyExposedStructure,
   wallAssemblyExteriorFinish,
   wallAssemblyFinishRef,
   wallAssemblyFraming,
@@ -1006,6 +1096,7 @@ export {
   type WallJoinResult,
   type WallTopologyChanges,
 } from './systems/wall/wall-topology'
+export { wallTrimPatch } from './systems/wall/wall-trim'
 export type { SceneGraph } from './utils/clone-scene-graph'
 export { cloneLevelSubtree, cloneSceneGraph, forkSceneGraph } from './utils/clone-scene-graph'
 export { areSemanticValuesEqual } from './utils/semantic-equal'

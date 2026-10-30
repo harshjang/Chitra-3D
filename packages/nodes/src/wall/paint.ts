@@ -25,6 +25,7 @@ import {
   type WallFaceChainFinish,
   type WallNode,
   type WallSurfaceSlotId,
+  wallFaceScriptPaintRefusal,
   wallRegionRole,
   wallRoomFaceRole,
   wallRoomFinishRole,
@@ -237,8 +238,8 @@ function sameChain(a: WallFaceChainFinish, b: WallFaceChainFinish) {
  * triangle of this wall is resolved again against the planned wall and rooms,
  * and takes the material that resolution draws — the paint where the click
  * paints, what shows once erased where it erases. The material array is copied
- * (never the shared cache) and the triangles are regrouped; cleanup restores
- * both.
+ * (never the shared cache) and the triangles are regrouped onto it in one swap;
+ * cleanup restores both.
  */
 function applyWallPreview(args: PaintPreviewArgs): (() => void) | null {
   const { role, material, materialPreset } = args
@@ -298,16 +299,9 @@ function applyWallPreview(args: PaintPreviewArgs): (() => void) | null {
     return lookIndex(chain.kind === 'legacy' ? chain.spec : { materialPreset: chain.ref })
   }
 
-  const geometry = mesh.geometry
-  const groups = geometry.groups.map((group) => ({ ...group }))
-  const regrouped = regroupWallFaces(geometry, before, indexFor)
+  const regrouped = regroupWallFaces(mesh.geometry, before, indexFor)
   if (!regrouped) return () => {}
-  geometry.groups = regrouped
-  const restoreMaterial = swapPreviewMaterial(mesh, materials)
-  return () => {
-    restoreMaterial()
-    if (mesh.geometry === geometry) geometry.groups = groups
-  }
+  return swapPreviewMaterial(mesh, materials, regrouped)
 }
 
 /**
@@ -471,6 +465,8 @@ export const wallPaint: PaintCapability = {
   buildPatch: (args: PaintPatchArgs) =>
     parseWallPaintRole(args.role)?.kind === 'slot' ? base.buildPatch(args) : {},
   commit: (args: PaintPatchArgs) => {
+    const refusal = wallFaceScriptPaintRefusal(args.node, args.role)
+    if (refusal) return refusal
     const parsed = parseWallPaintRole(args.role)
     if (!parsed) return
     // A trim is a slot like any other; faces, regions and rooms go through the plan.

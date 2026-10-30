@@ -1,7 +1,7 @@
 // @ts-expect-error — bun:test is provided by the Bun runtime; viewer does not
 // include Bun ambient types in its production declaration build.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import useViewer from './use-viewer'
+import useViewer, { anyGroundVeiled, groundVeiled, siteGroundShown } from './use-viewer'
 
 const resetMeasurementPreferences = () => {
   useViewer.setState({
@@ -149,5 +149,156 @@ describe('scene theme', () => {
 
     expect(useViewer.getState().sceneTheme).toBe('sunset')
     expect(useViewer.getState().savedSceneTheme).toBe('sunset')
+  })
+})
+
+describe('the ground over a level below grade', () => {
+  const below = { belowGrade: true, groundMode: 'auto', gradeStanding: 'below-grade' } as const
+
+  test('is veiled wholesale on Auto, not on Solid, not over a part-buried level', () => {
+    expect(groundVeiled(below)).toBe(true)
+    expect(groundVeiled({ ...below, groundMode: 'solid' })).toBe(false)
+    expect(groundVeiled({ ...below, gradeStanding: 'partly-below-grade' })).toBe(false)
+  })
+
+  test('is solid in the walkthrough, whatever level the overview had shown', () => {
+    expect(groundVeiled({ ...below, walkthroughMode: true })).toBe(false)
+    expect(anyGroundVeiled({ ...below, groundWindowVeiled: true, walkthroughMode: true })).toBe(
+      false,
+    )
+    expect(anyGroundVeiled({ ...below, groundWindowVeiled: true, walkthroughMode: false })).toBe(
+      true,
+    )
+  })
+})
+
+describe('project rendering defaults', () => {
+  const original = useViewer.getState()
+  beforeEach(() => useViewer.setState(original, true))
+  afterEach(() => useViewer.setState(original, true))
+  const authored = {
+    theme: 'studio',
+    exposure: 0.94,
+    shading: 'rendered' as const,
+    edges: 'off' as const,
+    lighting: {
+      background: '#dce4e5',
+      backgroundSky: null,
+      ambient: { color: '#ffffff', intensity: 0 },
+    },
+    postprocessing: { ambientOcclusion: false, colorGrading: false },
+  }
+
+  test('project defaults survive context changes without becoming global user preferences', () => {
+    const store = useViewer.getState()
+    store.setSceneTheme('paper')
+    store.setEdges('strong')
+    store.setProjectId('look-a')
+    store.setProjectPresentation(authored)
+    store.setRenderContext('editor', 'solid')
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'studio',
+      shading: 'rendered',
+      edges: 'off',
+    })
+    expect(useViewer.getState().sceneAppearance).toMatchObject({
+      background: '#dce4e5',
+      backgroundSky: null,
+      toneMappingExposure: 0.94,
+    })
+    expect(useViewer.getState().lookDefaults).toMatchObject({ theme: 'paper', edges: 'strong' })
+    expect(useViewer.getState().projectPreferences['look-a']?.look).toBeUndefined()
+    store.setProjectId('look-b')
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'paper',
+      edges: 'strong',
+      shading: 'solid',
+    })
+  })
+
+  test('local choices override only their project and survive switching away and back', () => {
+    const store = useViewer.getState()
+    store.setProjectId('look-a')
+    store.setProjectPresentation(authored)
+    store.setSceneTheme('night')
+    store.setEdges('soft')
+    store.setShading('solid')
+    expect(useViewer.getState().sceneAppearance.background).not.toBe('#dce4e5')
+    store.setProjectId('look-b')
+    store.setProjectPresentation(authored)
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'studio',
+      edges: 'off',
+      shading: 'rendered',
+    })
+    store.setProjectId('look-a')
+    store.setProjectPresentation(authored)
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'night',
+      edges: 'soft',
+      shading: 'solid',
+    })
+    store.resetProjectLook()
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'studio',
+      edges: 'off',
+      shading: 'rendered',
+    })
+    expect(useViewer.getState().sceneAppearance.toneMappingExposure).toBe(0.94)
+  })
+
+  test('an explicit temporary theme bypasses custom lighting even with the same theme id', () => {
+    const store = useViewer.getState()
+    store.setProjectId('look-a')
+    store.setProjectPresentation(authored)
+    store.showSceneTheme('studio')
+    expect(useViewer.getState().sceneAppearance.background).not.toBe('#dce4e5')
+    store.showSceneTheme(null)
+    expect(useViewer.getState().sceneAppearance.background).toBe('#dce4e5')
+    expect(useViewer.getState().projectPreferences['look-a']?.look).toBeUndefined()
+    store.setProjectPresentation(undefined)
+    expect(useViewer.getState().sceneAppearance.background).not.toBe('#dce4e5')
+  })
+
+  test('an embed without a project id can override and restore its authored look', () => {
+    const store = useViewer.getState()
+    store.setProjectPresentation({ ...authored, shadows: true })
+    store.setSceneTheme('night')
+    store.setEdges('strong')
+    store.setShadows(false)
+    store.setShading('solid')
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'night',
+      edges: 'strong',
+      shadows: false,
+      shading: 'solid',
+    })
+    store.resetProjectLook()
+    expect(useViewer.getState()).toMatchObject({
+      sceneTheme: 'studio',
+      edges: 'off',
+      shadows: true,
+      shading: 'rendered',
+    })
+    store.setProjectId('look-next')
+    expect(useViewer.getState().projectPreferences['']).toBeUndefined()
+    store.setProjectPresentation(authored)
+    expect(useViewer.getState().sceneAppearance.background).toBe('#dce4e5')
+  })
+})
+
+describe('the site ground with showGround off', () => {
+  test('stands in while a level below grade is shown, and leaves showGround to the author otherwise', () => {
+    // An authored landscape supplies the ground (showGround false): the level display hides it
+    // with the storeys above a basement, so the site's ground draws then.
+    expect(siteGroundShown({ showGround: false }, { belowGrade: true })).toBe(true)
+    expect(siteGroundShown({ showGround: false }, { belowGrade: false })).toBe(false)
+  })
+
+  test('is the site’s own ground whatever the display says when showGround is on or absent', () => {
+    for (const showGround of [undefined, true]) {
+      expect(siteGroundShown({ showGround }, { belowGrade: false })).toBe(true)
+      expect(siteGroundShown({ showGround }, { belowGrade: true })).toBe(true)
+    }
   })
 })

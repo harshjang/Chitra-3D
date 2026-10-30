@@ -2,9 +2,8 @@
 import '../bridge/node-shims'
 
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Client } from '@modelcontextprotocol/client'
+import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { WallNode, ZoneNode } from '@pascal-app/core/schema'
 import useScene from '@pascal-app/core/store'
 import { SceneBridge } from '../bridge/scene-bridge'
@@ -220,7 +219,7 @@ describe('pascal://agent-guide', () => {
       expect(text).toContain('0 to 1 along the wall')
       expect(text).toMatch(/glass meets at a corner.*add_corner_window/)
       expect(text).toContain('room_named_by_person')
-      expect(text).toContain('rename: true` only when the person asked')
+      expect(text).toContain('`rename: true` is for when the person asked')
       expect(text).toContain('editor_tab_busy')
       expect(text).toContain('invalid_input')
     } finally {
@@ -279,7 +278,9 @@ describe('pascal://agent-guide', () => {
     try {
       const res = await pair.client.readResource({ uri: 'pascal://agent/guide' })
       const text = (res.contents[0] as { text?: string }).text ?? ''
-      expect(text).toContain('Pascal MCP Agent Guide')
+      const canonical = await pair.client.readResource({ uri: 'pascal://agent-guide' })
+      expect(res.contents[0]?.mimeType).toBe('text/markdown')
+      expect(text).toBe((canonical.contents[0] as { text?: string }).text)
     } finally {
       await pair.close()
     }
