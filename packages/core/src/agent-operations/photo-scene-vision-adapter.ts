@@ -488,6 +488,96 @@ function record(value: unknown): Record<string, unknown> | null {
     ? (value as Record<string, unknown>)
     : null
 }
+
+const PHOTO_CATEGORY_ALIASES: Record<string, string> = {
+  bed: 'bed',
+  wardrobe: 'wardrobe',
+  wardrobe_cabinet: 'wardrobe',
+  closet: 'wardrobe',
+  desk: 'desk',
+  chair: 'chair',
+  folding_chair: 'chair',
+  bedside_table: 'drawer',
+  bedside_drawer_unit: 'drawer',
+  drawer: 'drawer',
+  shelf: 'shelf',
+  bookshelf: 'shelf',
+  bookcase: 'shelf',
+  book: 'book',
+  desk_lamp: 'light',
+  table_lamp: 'light',
+  lamp: 'light',
+  light: 'light',
+  rug: 'rug',
+  carpet: 'rug',
+  waste_bin: 'bin',
+  bin: 'bin',
+}
+
+const VALID_PHOTO_CATEGORIES = new Set([
+  'bed',
+  'wardrobe',
+  'desk',
+  'chair',
+  'drawer',
+  'shelf',
+  'book',
+  'light',
+  'rug',
+  'bin',
+  'sofa',
+  'table',
+  'picture',
+  'noticeboard',
+  'curtain',
+  'other',
+])
+
+export function normalizePhotoObjectCategories<T>(input: T): T {
+  const root = record(input)
+  const plan = record(root?.plan)
+
+  if (!root || !plan || !Array.isArray(plan.rooms)) return input
+
+  const rooms = plan.rooms.map((roomValue) => {
+    const room = record(roomValue)
+    if (!room || !Array.isArray(room.objects)) return roomValue
+
+    const objects = room.objects.map((objectValue) => {
+      const object = record(objectValue)
+      if (!object || typeof object.category !== 'string') return objectValue
+
+      const original = object.category
+      const key = original
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_')
+      const category = PHOTO_CATEGORY_ALIASES[key]
+
+      if (!category && !VALID_PHOTO_CATEGORIES.has(key)) {
+        throw new Error(`unsupported category "${original}"`)
+      }
+
+      const normalized = category ?? key
+
+      return normalized === original
+        ? objectValue
+        : {
+            ...object,
+            category: normalized,
+            ...(object.originalCategory == null ? { originalCategory: original } : {}),
+          }
+    })
+
+    return { ...room, objects }
+  })
+
+  return {
+    ...root,
+    plan: { ...plan, rooms },
+  } as T
+}
+
 function normalizeSide(value: unknown): PhotoOpeningPlan['hingesSide'] | undefined {
   if (typeof value !== 'string') return undefined
   const s = value.trim().toLowerCase()
@@ -500,12 +590,79 @@ function normalizeSwing(value: unknown): PhotoOpeningPlan['swingDirection'] | un
   if (d === 'out' || d === 'outward') return 'outward'
   return undefined
 }
-function normalizeOpening(opening: GeminiOpening, _polygon: unknown, _path: string): unknown {
-  const { hinge, swing, position: _pos, t: _t, ...canonical } = opening
+const OPENING_POINT_TOLERANCE = 0.025
+
+function planPoint(value: unknown): value is [number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    value.every((n) => typeof n === 'number' && Number.isFinite(n))
+  )
+}
+
+/** Distance from p to segment a-b, and how far along a-b the closest point lies. */
+function projectOntoSegment(p: [number, number], a: number[], b: number[]) {
+  const dx = b[0]! - a[0]!
+  const dz = b[1]! - a[1]!
+  const length = Math.hypot(dx, dz)
+  const t =
+    length === 0
+      ? 0
+      : Math.min(1, Math.max(0, ((p[0] - a[0]!) * dx + (p[1] - a[1]!) * dz) / (length * length)))
+  return {
+    distance: Math.hypot(p[0] - (a[0]! + t * dx), p[1] - (a[1]! + t * dz)),
+    along: t * length,
+  }
+}
+
+/**
+ * Converts a plan-space point on the declared wall into distanceAlongWall. The point is projected
+ * only onto its declared segment; a point that belongs to another wall is rejected, never reattached.
+ */
+function distanceFromPoint(
+  position: [number, number],
+  wallIndex: number,
+  polygon: unknown,
+  path: string,
+): number | undefined {
+  if (
+    !Array.isArray(polygon) ||
+    !Number.isInteger(wallIndex) ||
+    wallIndex < 0 ||
+    wallIndex >= polygon.length ||
+    !polygon.every(planPoint)
+  )
+    return undefined
+  const pts = polygon as number[][]
+  const n = pts.length
+  const declared = projectOntoSegment(position, pts[wallIndex]!, pts[(wallIndex + 1) % n]!)
+  if (declared.distance <= OPENING_POINT_TOLERANCE) return declared.along
+  const candidates = pts
+    .map((_, i) => i)
+    .filter(
+      (i) =>
+        i !== wallIndex &&
+        projectOntoSegment(position, pts[i]!, pts[(i + 1) % n]!).distance <=
+          OPENING_POINT_TOLERANCE,
+    )
+  throw new Error(
+    `${path}: point [${position[0]}, ${position[1]}] is not on declared wall ${wallIndex}; candidate wall segments within ${OPENING_POINT_TOLERANCE} m: ${candidates.length ? candidates.join(', ') : 'none'}`,
+  )
+}
+
+function normalizeOpening(opening: GeminiOpening, polygon: unknown, path: string): unknown {
+  const { hinge, swing, position, t: _t, ...canonical } = opening
   const hingesSide = normalizeSide(canonical.hingesSide) ?? normalizeSide(hinge)
   const swingDirection = normalizeSwing(canonical.swingDirection) ?? normalizeSwing(swing)
+  const fromPoint =
+    canonical.distanceAlongWall === undefined &&
+    planPoint(position) &&
+    typeof canonical.wallIndex === 'number'
+      ? distanceFromPoint(position, canonical.wallIndex, polygon, path)
+      : undefined
   return {
     ...canonical,
+    ...(fromPoint !== undefined ? { distanceAlongWall: fromPoint } : {}),
     ...(hingesSide ? { hingesSide } : {}),
     ...(swingDirection ? { swingDirection } : {}),
   }
@@ -590,22 +747,26 @@ export async function inferPhotoScene(
     images: orderedImages,
   })
 
-  // Parse the observation (lenient — bad fields degrade gracefully)
-  let observation: Observation = {}
-  try {
-    if (typeof raw === 'string') {
-      const cleaned = raw.replace(/```json|```/gi, '').trim()
-      observation = JSON.parse(cleaned) as Observation
-    } else if (typeof raw === 'object' && raw !== null) {
-      observation = raw as Observation
-    }
-  } catch {
-    // If the model returns something we can't parse, build an empty plan rather than crashing
-    observation = {}
+  // Support both structured inference bundles and free-text observations.
+  let result: unknown = raw
+
+  if (typeof raw === 'string') {
+    const cleaned = raw.replace(/```json|```/gi, '').trim()
+    result = JSON.parse(cleaned)
   }
 
-  // Stage 2: convert observations to a fully valid plan using deterministic code
-  const plan = observationToPlan(observation, manifest, input.catalog ?? [])
+  const structured = record(result)
+  const structuredPlan = record(structured?.plan)
 
-  return PhotoSceneInferenceBundleSchema.parse(plan)
+  if (structuredPlan && Array.isArray(structuredPlan.rooms)) {
+    return PhotoSceneInferenceBundleSchema.parse(
+      normalizePhotoObjectCategories(normalizeGeminiPhotoSceneResponse(result)),
+    )
+  }
+
+  const observation = record(result) as Observation | null
+
+  const plan = observationToPlan(observation ?? {}, manifest, input.catalog ?? [])
+
+  return PhotoSceneInferenceBundleSchema.parse(normalizePhotoObjectCategories(plan))
 }

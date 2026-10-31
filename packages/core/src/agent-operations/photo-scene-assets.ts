@@ -49,19 +49,62 @@ function isCompatibleMounting(object: PhotoAssetQuery, asset: AssetInput): boole
 }
 
 /**
- * Finds the best-matching catalog model for an observed object.
- * Priority: exact assetId match > highest score from all mounting-compatible candidates.
- * No category-specific name filters.
+ * Category-to-pattern map. Derived entirely from the catalog's own naming conventions
+ * (id, name, tags), not from room knowledge. Each pattern matches names that are
+ * semantically correct for the category, preventing a 'table lamp' winning for
+ * 'table' or a 'cactus' winning for 'stand'.
  */
+const CATEGORY_COMPATIBILITY: Record<string, RegExp> = {
+  bed: /\b(bed|bunk)\b/i,
+  wardrobe: /\b(wardrobe|closet|armoire)\b/i,
+  drawer: /\b(drawer|dresser|nightstand|bedside[- ]table|bedside[- ]cabinet)\b/i,
+  desk: /\b(desk|office[- ]table|study[- ]table|writing[- ]table)\b/i,
+  sofa: /\b(sofa|couch|loveseat|settee)\b/i,
+  chair: /\b(chair|armchair|lounge[- ]chair)\b/i,
+  table:
+    /\b(coffee|cocktail|side|end|occasional|dining|glass[- ]top|center|centre)[- ]?table\b|\btable\b(?!\s*lamp)/i,
+  stand:
+    /\b(display[- ]stand|newspaper[- ]stand|magazine[- ]stand|coat[- ]stand|plant[- ]stand)\b/i,
+  bin: /\b(bin|wastebasket|waste[- ]bin|trash[- ]can)\b/i,
+  picture: /\b(picture|painting|photo[- ]frame|wall[- ]frame|framed[- ]art)\b/i,
+  noticeboard: /\b(noticeboard|notice[- ]board|bulletin[- ]board|cork[- ]board)\b/i,
+  curtain: /\b(curtain|drape|drapery)\b/i,
+  light: /\b(lamp|light|luminaire)\b/i,
+  shelf: /\b(bookcase|bookshelf|wall[- ]shelf|shelf|shelving)\b/i,
+  rug: /\b(rug|carpet|area[- ]rug)\b/i,
+  book: /\b(book|books)\b/i,
+  other: /.^/,
+}
+
 export function resolvePhotoSceneAsset(
   object: PhotoAssetQuery,
   catalog: readonly AssetInput[],
 ): AssetInput | undefined {
+  // Exact assetId match: only honour it when it also passes the category compatibility check.
+  // If the hint fails (e.g. assetId='table-lamp' for category='table'), fall through to scoring.
   if (object.assetId) {
     const exact = catalog.find((asset) => asset.id === object.assetId)
-    if (exact && isCompatibleMounting(object, exact)) return exact
+    if (exact && isCompatibleMounting(object, exact)) {
+      const pattern = CATEGORY_COMPATIBILITY[object.category]
+      const nameText = `${exact.id.replace(/[-_]/g, ' ')} ${exact.name}`
+      if (!pattern || pattern.test(nameText)) return exact
+      // assetId hint failed category check — fall through to scored candidates below
+    }
   }
-  const candidates = catalog.filter((asset) => isCompatibleMounting(object, asset))
+
+  const compatiblePattern = CATEGORY_COMPATIBILITY[object.category]
+  // No compatibility pattern for this category means no catalog entry can match it.
+  if (compatiblePattern === undefined) return undefined
+
+  const candidates = catalog.filter((asset) => {
+    if (!isCompatibleMounting(object, asset)) return false
+    // Match id+name only, not tags — tags like ['table'] on a lamp should not
+    // cause it to match the 'table' category.
+    const nameText = `${asset.id.replace(/[-_]/g, ' ')} ${asset.name}`
+    if (!compatiblePattern.test(nameText)) return false
+    return true
+  })
+
   return candidates
     .map((asset, index) => ({ asset, index, score: scoreAsset(object, asset) }))
     .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.asset
@@ -94,4 +137,92 @@ export function photoObjectFootprintDimensions(
   const native = asset.dimensions ?? [1, 1, 1]
   const scale = Math.sqrt((object.dimensions[0] / native[0]) * (object.dimensions[2] / native[2]))
   return [native[0] * scale, native[2] * scale]
+}
+
+type PhotoAppearanceInput = Pick<PhotoObjectPlan, 'category' | 'objectType'> & {
+  appearance?: {
+    colors?: string[]
+    material?: string
+    pattern?: string
+  }
+  dominantColors?: string[]
+  material?: string
+  pattern?: string
+}
+
+function normalizeAppearanceColor(value: string): string | undefined {
+  const color = value.trim().toLowerCase()
+
+  const namedColors: Record<string, string> = {
+    black: '#171717',
+    white: '#f5f5f5',
+    tan: '#ae8057',
+    beige: '#d8c3a5',
+    brown: '#795548',
+    grey: '#808080',
+    gray: '#808080',
+    red: '#c62828',
+    blue: '#2563eb',
+    green: '#388e3c',
+    yellow: '#facc15',
+  }
+
+  if (/^#[0-9a-f]{6}$/i.test(color)) return color
+
+  return namedColors[color]
+}
+
+export function photoObjectMaterialSlots(
+  object: PhotoAppearanceInput,
+  asset: Pick<AssetInput, 'id' | 'name'>,
+): Record<string, string> | undefined {
+  const description = `${object.objectType} ${asset.name} ${asset.id}`.toLowerCase()
+
+  const colors = object.appearance?.colors ?? object.dominantColors ?? []
+
+  // First try explicit appearance colors, then infer from the description text.
+  const colorFromAppearance = colors
+    .map(normalizeAppearanceColor)
+    .find((value): value is string => value !== undefined)
+
+  const color =
+    colorFromAppearance ??
+    (/\b(black|dark)\b/.test(description)
+      ? '#171717'
+      : /\btan\b/.test(description)
+        ? '#ae8057'
+        : /\bbeige\b/.test(description)
+          ? '#d8c3a5'
+          : /\bbrown\b/.test(description)
+            ? '#795548'
+            : undefined)
+
+  const material = (object.appearance?.material ?? object.material ?? '').toLowerCase()
+
+  const slots: Record<string, string> = {}
+
+  const isSofa = /\bsofa\b/.test(description)
+  const isChair = /\b(chair|armchair)\b/.test(description)
+  const isTable = /\btable\b/.test(description)
+  const isGlassTop = /\bglass\b/.test(description)
+
+  if ((isSofa || isChair) && color) {
+    slots.slot_body = color
+
+    if (isSofa && color === '#171717') {
+      slots.slot_cushion = '#202020'
+    }
+  }
+
+  if (isTable && isGlassTop) {
+    slots.slot_top = 'library:preset-glass'
+  }
+
+  // Preserve useful material information without inventing a finish
+  // when the observed color is unavailable.
+  if (isTable && material === 'wood' && color) {
+    slots.slot_top = color
+  }
+
+  return Object.keys(slots).length > 0 ? slots : undefined
 }

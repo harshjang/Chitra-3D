@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { MIN_EDGE_LENGTH_METRES, MIN_POLYGON_AREA_SQ_METRES } from './photo-scene-config'
 
 const Point2D = z.tuple([z.number().finite(), z.number().finite()])
 
@@ -22,6 +21,35 @@ const PhotoOpeningPlanSchema = z
   })
   .strict()
 
+const PhotoObjectFields = {
+  id: z.string().trim().min(1).max(120),
+  objectType: z.string().trim().min(1).max(120),
+  dimensions: z.tuple([
+    z.number().positive().max(20),
+    z.number().positive().max(10),
+    z.number().positive().max(20),
+  ]),
+  position: Point2D,
+  // Radians, as used for the item's Y rotation. A larger magnitude almost always means
+  // the model answered in degrees, which would silently turn the object the wrong way.
+  yaw: z
+    .number()
+    .finite()
+    .min(
+      -2 * Math.PI - 1e-6,
+      'yaw must be in radians (|yaw| <= 2*pi); got a value that looks like degrees',
+    )
+    .max(
+      2 * Math.PI + 1e-6,
+      'yaw must be in radians (|yaw| <= 2*pi); got a value that looks like degrees',
+    ),
+  assetId: z.string().trim().min(1).max(120).optional(),
+  assetCategory: z.string().trim().min(1).max(120).optional(),
+  confidence: z.number().min(0).max(1),
+  uncertainties: z.array(z.string().trim().min(1).max(300)).default([]),
+  groupId: z.string().trim().min(1).max(120).optional(),
+}
+
 export const PHOTO_OBJECT_CATEGORIES = [
   'picture',
   'noticeboard',
@@ -42,82 +70,38 @@ export const PHOTO_OBJECT_CATEGORIES = [
   'other',
 ] as const
 
-const LEGACY_WALL_MOUNTED_CATEGORIES: readonly string[] = [
-  'picture',
-  'noticeboard',
-  'curtain',
-  'shelf',
-  'book',
-]
-
-export const PhotoObjectMounting = z.enum(['floor', 'wall', 'ceiling', 'on-surface'])
-export type PhotoObjectMounting = z.infer<typeof PhotoObjectMounting>
-
-export const PhotoObject = z
+const WallMountedPhotoObject = z
   .object({
-    id: z.string().trim().min(1).max(120),
-    objectType: z.string().trim().min(1).max(120),
-    name: z.string().trim().min(1).max(120).optional(),
-    description: z.string().trim().min(1).max(500).optional(),
-    category: z.string().trim().min(1).max(120).optional(),
+    ...PhotoObjectFields,
+    category: z.enum(PHOTO_OBJECT_CATEGORIES.slice(0, 5)),
     originalCategory: z.string().trim().min(1).max(120).optional(),
-    dimensions: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]),
-    position: Point2D,
-    // Radians, as used for the item's Y rotation. A larger magnitude almost always means
-    // the model answered in degrees, which would silently turn the object the wrong way.
-    yaw: z
-      .number()
-      .finite()
-      .min(
-        -2 * Math.PI - 1e-6,
-        'yaw must be in radians (|yaw| <= 2*pi); got a value that looks like degrees',
-      )
-      .max(
-        2 * Math.PI + 1e-6,
-        'yaw must be in radians (|yaw| <= 2*pi); got a value that looks like degrees',
-      ),
-    mounting: PhotoObjectMounting.default('floor'),
-    restsOn: z.string().trim().min(1).max(120).optional(),
-    facing: z.string().trim().min(1).max(120).optional(),
-    /** Centre height above the finished floor, in metres. Required for wall/ceiling items. */
-    elevation: z.number().finite().nonnegative().optional(),
-    assetId: z.string().trim().min(1).max(120).optional(),
-    assetCategory: z.string().trim().min(1).max(120).optional(),
-    confidence: z.number().min(0).max(1),
-    uncertainties: z.array(z.string().trim().min(1).max(300)).default([]),
-    groupId: z.string().trim().min(1).max(120).optional(),
-    evidence: z
-      .array(
-        z
-          .object({
-            imageIndex: z.number().int().nonnegative().optional(),
-            captureId: z.string().optional(),
-            box: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
-          })
-          .passthrough(),
-      )
-      .optional()
-      .default([]),
-    appearance: z
-      .object({
-        colors: z.array(z.string()).optional(),
-        materials: z.array(z.string()).optional(),
-        pattern: z.string().optional(),
-      })
-      .optional(),
+    /** Centre height above the finished floor, in metres. */
+    elevation: z.number().finite().nonnegative().max(10).optional(),
   })
   .strict()
   .superRefine((object, ctx) => {
-    const isWallOrCeiling = object.mounting === 'wall' || object.mounting === 'ceiling'
-    if (isWallOrCeiling && object.elevation === undefined) {
-      const label = object.category || object.objectType
+    if (object.elevation === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['elevation'],
-        message: `${object.mounting === 'wall' ? 'Wall-mounted' : 'Ceiling'} ${label} requires an evidence-based centre elevation above the finished floor; infer it from the photos or report the unresolved placement instead of guessing.`,
+        message: `Wall-mounted ${object.category} requires an evidence-based centre elevation above the finished floor; infer it from the photos or report the unresolved placement instead of guessing.`,
       })
     }
   })
+
+const FloorPlacedPhotoObject = z
+  .object({
+    ...PhotoObjectFields,
+    category: z.enum(PHOTO_OBJECT_CATEGORIES.slice(5)),
+    originalCategory: z.string().trim().min(1).max(120).optional(),
+    elevation: z.number().finite().nonnegative().max(10).optional(),
+  })
+  .strict()
+
+export const PhotoObject = z.discriminatedUnion('category', [
+  WallMountedPhotoObject,
+  FloorPlacedPhotoObject,
+])
 
 const PhotoRoom = z
   .object({
@@ -129,7 +113,7 @@ const PhotoRoom = z
     wallThickness: z.number().positive(),
     doors: z.array(PhotoOpeningPlanSchema).optional(),
     windows: z.array(PhotoOpeningPlanSchema).optional(),
-    objects: z.array(PhotoObject).optional().default([]),
+    objects: z.array(PhotoObject).max(200).optional().default([]),
     /** Wall-mounted objects whose height could not be read from the photos. Reported, never placed. */
     unresolvedObjects: z
       .array(
@@ -137,7 +121,7 @@ const PhotoRoom = z
           .object({
             id: z.string().trim().min(1).max(120),
             objectType: z.string().trim().min(1).max(120),
-            category: z.string().trim().min(1).max(120).optional(),
+            category: z.string().trim().min(1).max(120),
             reason: z.string().trim().min(1).max(300),
           })
           .strict(),
@@ -159,7 +143,7 @@ const PhotoScenePlanObjectSchema = z
   .object({
     version: z.literal(1),
     units: z.literal('metres'),
-    rooms: z.array(PhotoRoom).min(1),
+    rooms: z.array(PhotoRoom).min(1).max(100),
     source: z
       .object({
         kind: z.literal('smartphone-images'),
@@ -322,102 +306,44 @@ export function normalizePhotoObjects(input: unknown): unknown {
 
 function normalizeRoomObjects(room: unknown): unknown {
   if (!isRecord(room) || !Array.isArray(room.objects)) return room
+  const wallMounted = PHOTO_OBJECT_CATEGORIES.slice(0, 5) as readonly string[]
   const kept: unknown[] = []
   const unresolved: unknown[] = Array.isArray(room.unresolvedObjects)
     ? [...room.unresolvedObjects]
     : []
   let changed = false
 
-  for (const rawObject of room.objects) {
-    if (!isRecord(rawObject)) {
-      kept.push(rawObject)
+  for (const object of room.objects) {
+    if (!isRecord(object)) {
+      kept.push(object)
       continue
     }
-    let object = { ...rawObject }
     const category = typeof object.category === 'string' ? object.category : ''
-    if (object.mounting === undefined && LEGACY_WALL_MOUNTED_CATEGORIES.includes(category)) {
-      object.mounting = 'wall'
-      changed = true
-    }
+
     if (
       typeof object.yaw === 'number' &&
       Number.isFinite(object.yaw) &&
       Math.abs(object.yaw) > 2 * Math.PI + 1e-6
     ) {
-      const originalYaw = object.yaw
+      changed = true
       const notes = Array.isArray(object.uncertainties) ? object.uncertainties : []
-      object = {
+      kept.push({
         ...object,
-        yaw: (originalYaw * Math.PI) / 180,
-        uncertainties: [...notes, `Rotation was given as ${originalYaw} and read as degrees.`],
-      }
-      changed = true
-    }
-
-    const mounting = object.mounting
-    const requiresElevation = mounting === 'wall' || mounting === 'ceiling'
-    if (
-      requiresElevation &&
-      (typeof object.elevation !== 'number' || !Number.isFinite(object.elevation))
-    ) {
-      unresolved.push({
-        id:
-          typeof object.id === 'string' && object.id.trim()
-            ? object.id
-            : `unresolved-${unresolved.length + 1}`,
-        objectType:
-          typeof object.objectType === 'string' && object.objectType.trim()
-            ? object.objectType
-            : typeof object.name === 'string' && object.name.trim()
-              ? object.name
-              : 'Unresolved object',
-        ...(typeof object.category === 'string' && object.category.trim()
-          ? { category: object.category }
-          : {}),
-        reason: `The ${mounting} placement has no evidence-based centre elevation; the object was not placed because its height could not be established from the photos.`,
+        yaw: (object.yaw * Math.PI) / 180,
+        uncertainties: [...notes, `Rotation was given as ${object.yaw} and read as degrees.`],
       })
-      changed = true
       continue
     }
     kept.push(object)
   }
 
   if (!changed) return room
-  return {
-    ...room,
-    objects: kept,
-    ...(unresolved.length ? { unresolvedObjects: unresolved } : {}),
-  }
-}
-
-function normalizeScaleBasis(input: unknown): unknown {
-  if (!isRecord(input) || !Array.isArray(input.rooms)) return input
-  let changed = false
-  const rooms = input.rooms.map((rawRoom) => {
-    if (!isRecord(rawRoom) || !isRecord(rawRoom.scale)) return rawRoom
-    const scale = rawRoom.scale
-    if (
-      scale.basis === 'known-measurement' ||
-      scale.basis === 'visual-reference' ||
-      scale.basis === 'estimated'
-    ) {
-      return rawRoom
-    }
-    changed = true
-    // Unknown model wording cannot be treated as a verified measurement. Use the conservative
-    // estimated label and preserve/raise uncertainty rather than inventing a known reference.
-    const uncertainty =
-      typeof scale.uncertainty === 'number' && Number.isFinite(scale.uncertainty)
-        ? Math.max(0.5, Math.min(1, scale.uncertainty))
-        : 0.75
-    return { ...rawRoom, scale: { ...scale, basis: 'estimated', uncertainty } }
-  })
-  return changed ? { ...input, rooms } : input
+  return { ...room, objects: kept, ...(unresolved.length ? { unresolvedObjects: unresolved } : {}) }
 }
 
 /** Everything applied to a model's raw plan before validation. */
 export function normalizePhotoPlan(input: unknown): unknown {
-  return normalizePhotoObjects(normalizeScaleBasis(normalizePhotoPlanWinding(input)))
+  return normalizePhotoObjects(normalizePhotoPlanWinding(input))
 }
 
 export const PhotoScenePlanSchema = z.preprocess(normalizePhotoPlan, PhotoScenePlanObjectSchema)
@@ -479,9 +405,9 @@ function signedPolygonArea(polygon: readonly Point[]): number {
 }
 
 function validatePolygon(polygon: readonly Point[], path: string): void {
-  if (signedPolygonArea(polygon) <= MIN_POLYGON_AREA_SQ_METRES) {
+  if (signedPolygonArea(polygon) <= 0.01) {
     throw new Error(
-      `${path}: room polygon must be counter-clockwise in room-local X/Z axes and exceed ${MIN_POLYGON_AREA_SQ_METRES} m²`,
+      `${path}: room polygon must be counter-clockwise in room-local X/Z axes and exceed 0.01 m²`,
     )
   }
 
@@ -489,7 +415,7 @@ function validatePolygon(polygon: readonly Point[], path: string): void {
     const a = polygon[i]!
     const b = polygon[(i + 1) % polygon.length]!
 
-    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < MIN_EDGE_LENGTH_METRES) {
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.01) {
       throw new Error(`${path}: edge ${i} is too short`)
     }
 
