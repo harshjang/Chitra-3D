@@ -312,13 +312,21 @@ function normalizeRoomObjects(room: unknown): unknown {
     ? [...room.unresolvedObjects]
     : []
   let changed = false
+  const validCategories = new Set<string>(PHOTO_OBJECT_CATEGORIES)
 
   for (const object of room.objects) {
     if (!isRecord(object)) {
       kept.push(object)
       continue
     }
-    const category = typeof object.category === 'string' ? object.category : ''
+    const rawCategory = typeof object.category === 'string' ? object.category : ''
+    // Gemini sometimes returns free-text values like "furniture" or "storage unit".
+    // Map anything not in the canonical list to "other" so parsing succeeds.
+    const category = validCategories.has(rawCategory) ? rawCategory : 'other'
+    if (rawCategory && rawCategory !== category) {
+      changed = true
+      if (!object.originalCategory) object.originalCategory = rawCategory
+    }
 
     if (
       typeof object.yaw === 'number' &&
