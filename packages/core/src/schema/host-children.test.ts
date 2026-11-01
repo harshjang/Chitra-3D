@@ -50,32 +50,34 @@ test.each(baseline)(
   (saved) => {
     const expected = saved.type === 'column' ? { ...saved, children: [] } : saved
     const parsedExpected =
-      saved.type === 'zone'
-        ? { ...expected, boundarySeparatorIds: [], holes: [] }
-        : saved.type === 'door' || saved.type === 'window'
-          ? { ...expected, floorThresholdVersion: 1 }
-          : saved.type === 'fence'
-            ? {
-                ...expected,
-                children: [],
-                surfaceMode: 'auto',
-                transitionMode: 'slope',
-                transitionWidth: 0.8,
-                picketSpacing: 0.27,
-                patternDistribution: 'automatic',
-                patternAlignment: 'center',
-                patternCount: 4,
-                patternRemainder: 'leave',
-                picketWidth: 0.07,
-                picketTop: 'flat',
-                picketProfile: 'level',
-                picketTopClearance: 0.2,
-                picketVariation: 0.23,
-                picketRailProjection: 0.001,
-                picketRailCount: 2,
-                infillPlacement: 'center',
-              }
-            : expected
+      saved.type === 'scan'
+        ? { ...expected, collisionEnabled: false }
+        : saved.type === 'zone'
+          ? { ...expected, boundarySeparatorIds: [], holes: [] }
+          : saved.type === 'door' || saved.type === 'window'
+            ? { ...expected, floorThresholdVersion: 1 }
+            : saved.type === 'fence'
+              ? {
+                  ...expected,
+                  children: [],
+                  surfaceMode: 'auto',
+                  transitionMode: 'slope',
+                  transitionWidth: 0.8,
+                  picketSpacing: 0.27,
+                  patternDistribution: 'automatic',
+                  patternAlignment: 'center',
+                  patternCount: 4,
+                  patternRemainder: 'leave',
+                  picketWidth: 0.07,
+                  picketTop: 'flat',
+                  picketProfile: 'level',
+                  picketTopClearance: 0.2,
+                  picketVariation: 0.23,
+                  picketRailProjection: 0.001,
+                  picketRailCount: 2,
+                  infillPlacement: 'center',
+                }
+              : expected
     expect(JSON.parse(JSON.stringify(AnyNode.parse(saved)))).toEqual(parsedExpected)
     // Loading fills the schema defaults a stored node leaves out, nothing else.
     const graph = { [saved.id]: parsedExpected }

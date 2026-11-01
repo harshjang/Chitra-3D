@@ -895,6 +895,9 @@ function SnapAwareGrid() {
 
 // ── Viewer scene content: memoized so <Viewer> doesn't re-render on mode/viewMode changes ──
 
+/** Room names, areas and wall or site dimensions are not shown in the 3D view. */
+const SHOW_3D_MEASUREMENTS = false
+
 const ViewerSceneContent = memo(function ViewerSceneContent({
   isVersionPreviewMode,
   isLoading,
@@ -939,8 +942,8 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!(noEditing || isXRMode) && <FloatingActionMenu />}
       {!(noEditing || isXRMode) && <GroupFloatingActionMenu />}
       {!(noEditing || isXRMode) && <FloatingBuildingActionMenu />}
-      {!(noEditing || isXRMode) && <RoomLabels3D />}
-      {!(isFirstPersonMode || isXRMode) && <WallMeasurementLabel />}
+      {SHOW_3D_MEASUREMENTS && !(noEditing || isXRMode) && <RoomLabels3D />}
+      {SHOW_3D_MEASUREMENTS && !(isFirstPersonMode || isXRMode) && <WallMeasurementLabel />}
       <ExportManager />
       {isFirstPersonMode ? <ViewerZoneSystem /> : <ZoneSystem />}
       <CeilingSystem />
@@ -956,7 +959,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!isXRMode && <FollowPascal />}
       {!isXRMode && <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />}
       {!isXRMode && <VectorEdgeExtractor />}
-      {!(isFirstPersonMode || isXRMode) && <SiteEdgeLabels />}
+      {SHOW_3D_MEASUREMENTS && !(isFirstPersonMode || isXRMode) && <SiteEdgeLabels />}
       {presentationsReady ? <ViewerPresentations /> : null}
       {!noEditing && viewerSceneSlot}
     </>
@@ -1342,6 +1345,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
                 renderContext="editor"
                 renderPaused={!show3d && !showLoader}
                 sceneReadyKey={sceneReadyKey}
+                sceneReadyMaxWaitMs={45_000}
                 immersive={immersive}
                 // Walk/drone framing during snapshot capture is camera-only: the
                 // viewer's default selection manager would hover-highlight whatever

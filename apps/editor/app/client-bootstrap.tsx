@@ -30,7 +30,7 @@ export function ClientBootstrap({
 
   useEffect(() => {
     if (!enableDevDiagnostics) return
-    import('react-scan').then(({ scan }) => scan({ enabled: true }))
+    //import('react-scan').then(({ scan }) => scan({ enabled: true }))
   }, [enableDevDiagnostics])
 
   useEffect(() => {

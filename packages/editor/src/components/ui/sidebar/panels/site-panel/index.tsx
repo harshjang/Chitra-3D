@@ -48,6 +48,7 @@ const SiteKindPanel = lazy(async () => {
 })
 import { useShallow } from 'zustand/react/shallow'
 import { ColorDot } from './../../../../../components/ui/primitives/color-dot'
+import { Switch } from '../../../primitives/switch'
 import {
   Popover,
   PopoverContent,
@@ -490,6 +491,21 @@ const ReferenceItem = memo(function ReferenceItem({
           >
             {isVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
           </button>
+        ) : null}
+        {isCapture && refNode.type === 'scan' ? (
+          <div
+            className="z-20 flex shrink-0 items-center"
+            onClick={(event) => event.stopPropagation()}
+            title="Include this reconstructed scan in first-person walkthrough collision"
+          >
+            <Switch
+              aria-label="Enable walkthrough collision"
+              checked={refNode.collisionEnabled}
+              onCheckedChange={(checked) =>
+                updateNode(refNode.id, { collisionEnabled: checked })
+              }
+            />
+          </div>
         ) : null}
         <button
           className="z-20 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-colors hover:bg-black/5 hover:text-foreground group-hover/ref:opacity-100 dark:hover:bg-white/10"

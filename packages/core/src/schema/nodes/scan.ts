@@ -22,6 +22,8 @@ export const ScanNode = BaseNode.extend({
   rotation: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   scale: z.number().default(1),
   opacity: z.number().min(0).max(100).default(100),
+  // Reconstructed scans are visual-only by default; opt in to walkthrough collision.
+  collisionEnabled: z.boolean().default(false),
 })
 
 export type CaptureSessionReference = z.infer<typeof CaptureSessionReference>

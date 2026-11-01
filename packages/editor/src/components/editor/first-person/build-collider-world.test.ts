@@ -15,6 +15,7 @@ import {
   LevelNode,
   nodeRegistry,
   registerNode,
+  ScanNode,
   ShelfNode,
   SiteNode,
   SlabNode,
@@ -93,6 +94,27 @@ describe('buildFirstPersonColliderWorldFromRegistry', () => {
 
     expect(world).not.toBeNull()
     expect(world?.bounds?.min.x).toBeCloseTo(-0.5)
+    expect(world?.bounds?.max.x).toBeCloseTo(4)
+    world?.dispose()
+  })
+
+  test('opt-in scan collision includes enabled scans and ignores visual-only scans', () => {
+    registerColliderDefinition('scan', ScanNode, 'site')
+
+    const visualOnly = ScanNode.parse({ id: 'scan_visual_only' })
+    const collisionEnabled = ScanNode.parse({
+      id: 'scan_collision_enabled',
+      collisionEnabled: true,
+    })
+
+    setSceneNodes([visualOnly, collisionEnabled])
+    // Put the visual-only mesh far away; it must not expand collider bounds.
+    mountNode(visualOnly, [2, 2, 2], [20, 1, 0])
+    mountNode(collisionEnabled, [2, 2, 2], [3, 1, 0])
+
+    const world = buildFirstPersonColliderWorldFromRegistry()
+    expect(world).not.toBeNull()
+    expect(world?.bounds?.min.x).toBeCloseTo(2)
     expect(world?.bounds?.max.x).toBeCloseTo(4)
     world?.dispose()
   })

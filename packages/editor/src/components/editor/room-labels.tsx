@@ -762,10 +762,7 @@ export function useFadePresence(shown: boolean, onGone?: () => void): boolean {
   return isPresent
 }
 
-/**
- * One pill layer per level: the current level's fades in, a level just left
- * fades out over the next one, then unmounts.
- */
+/** Tracks levels that need 2D pill layers during their visibility fade. */
 function useFadingLevels(levelId: string | null, visible: boolean) {
   const [levels, setLevels] = useState<string[]>([])
   useEffect(() => {
@@ -1392,37 +1389,35 @@ function OpenRoomLabelDetail({
 const renderDetail2D = (entry: LabelEntry) => <RoomDetail entry={entry} view="2d" />
 
 /** Light name-and-area pills over each room and drawn zone of the active level. */
+/** Room names and areas are not shown in the 3D view. */
+const SHOW_ROOM_LABELS_IN_3D = false
+
 export function RoomLabels3D() {
   const levelId = useViewer((s) => s.selection.levelId)
   const sceneShown = useEditor((s) => isViewVisible(s, VIEW_3D))
-  const visible = useRoomLabelsVisible() && sceneShown
-  const { levels, drop } = useFadingLevels(levelId, visible)
-  return levels.map((id) => (
-    <LevelRoomLabels3D key={id} levelId={id} onGone={drop} shown={visible && id === levelId} />
-  ))
+  const labelsOn = useRoomLabelsVisible()
+  const visible = SHOW_ROOM_LABELS_IN_3D && labelsOn && sceneShown
+  return <LevelRoomLabels3D levelId={levelId} shown={visible} />
 }
 
-function LevelRoomLabels3D({
-  levelId,
-  shown,
-  onGone,
-}: {
-  levelId: string
-  shown: boolean
-  onGone: (levelId: string) => void
-}) {
-  const present = useFadePresence(shown, () => onGone(levelId))
-  const entries = useRoomLabelEntries(present ? levelId : null)
-  if (!present) return null
+function LevelRoomLabels3D({ levelId, shown }: { levelId: string | null; shown: boolean }) {
+  // Keep the Html-backed subtree mounted after fade-out to avoid tearing down
+  // Drei-managed React roots during a parent render.
+  const entries = useRoomLabelEntries(levelId)
   return (
     <RoomPillsLayer3D
       entries={entries}
-      levelObject={() => sceneRegistry.nodes.get(levelId)}
+      levelObject={() => (levelId ? sceneRegistry.nodes.get(levelId) : undefined)}
       renderDetail={(entry) => <RoomDetail entry={entry} view="3d" />}
       renderLabel={(entry, anchors, elements) => (
-        <EditorRoomLabel3D anchors={anchors} elements={elements} entry={entry} />
+        <EditorRoomLabel3D
+          active={entries.some((candidate) => candidate.zoneId === entry.zoneId)}
+          anchors={anchors}
+          elements={elements}
+          entry={entry}
+        />
       )}
-      shown={shown}
+      shown={shown && !!levelId}
     />
   )
 }
@@ -1431,15 +1426,17 @@ function EditorRoomLabel3D({
   entry,
   anchors,
   elements,
+  active,
 }: {
   entry: LabelEntry
   anchors: Map<string, Vector3>
   elements: Map<string, HTMLElement>
+  active: boolean
 }) {
   const floorY = useScene((s) => roomFloorElevation(s.nodes, entry.zoneId))
   return (
     <RoomLabelAnchor3D anchors={anchors} entry={entry} floorY={floorY}>
-      <RoomPill elements={elements} entry={entry} view="3d" />
+      {active ? <RoomPill elements={elements} entry={entry} view="3d" /> : null}
     </RoomLabelAnchor3D>
   )
 }
@@ -1592,16 +1589,32 @@ export function RoomPillsLayer3D({
 }) {
   const ref = useRef<Group>(null)
   const [anchors] = useState(() => new RoomAnchors())
+  // Drei's Html owns a separate React DOM root per anchor. Keep removed room
+  // anchors as empty Html shells for the lifetime of this layer so normal
+  // room and level updates never synchronously unmount those nested roots.
+  const [retainedEntries, setRetainedEntries] = useState<readonly LabelEntry[]>(entries)
+  const retainedById = new Map(retainedEntries.map((entry) => [entry.zoneId, entry]))
+  for (const entry of entries) retainedById.set(entry.zoneId, entry)
+  const renderEntries = [...retainedById.values()]
+  const pruneFrame = useRef<number | null>(null)
+  useEffect(() => {
+    if (pruneFrame.current !== null) cancelAnimationFrame(pruneFrame.current)
+    pruneFrame.current = requestAnimationFrame(() => {
+      pruneFrame.current = null
+      setRetainedEntries(entries)
+    })
+    return () => {
+      if (pruneFrame.current !== null) cancelAnimationFrame(pruneFrame.current)
+      pruneFrame.current = null
+    }
+  }, [entries])
   const view = useRef(new Float64Array(50))
   const host = useThree((s) => (s.events.connected ?? s.gl.domElement.parentNode) as HTMLElement)
-  const [portals] = useState(() =>
-    typeof document === 'undefined'
-      ? null
-      : {
-          pills: { current: document.createElement('div') },
-          detail: { current: document.createElement('div') },
-        },
-  )
+  const [portals, setPortals] = useState<{
+    pills: { current: HTMLElement }
+    detail: { current: HTMLElement }
+  } | null>(null)
+  const portalHostGeneration = useRef(0)
   const canvas = useThree((s) => s.gl.domElement)
   const { layer, gone } = usePillLayer(
     shown,
@@ -1611,15 +1624,29 @@ export function RoomPillsLayer3D({
     () => canvas,
   )
   useEffect(() => {
+    if (typeof document === 'undefined') return
+    setPortals({
+      pills: { current: document.createElement('div') },
+      detail: { current: document.createElement('div') },
+    })
+  }, [])
+
+  useEffect(() => {
     if (!(host && portals)) return
     const { pills, detail } = portals
     pills.current.className = 'pointer-events-none absolute inset-0 isolate z-0 overflow-hidden'
     // Over the flags and guides on the canvas (z-index 25 at most), unlike the pills.
     detail.current.className = 'pointer-events-none absolute inset-0 z-30'
     host.append(pills.current, detail.current)
+    const generation = ++portalHostGeneration.current
     return () => {
-      pills.current.remove()
-      detail.current.remove()
+      // Drei's Html owns React roots inside these portal containers. Let its
+      // descendant cleanup unmount those roots before detaching their DOM.
+      queueMicrotask(() => {
+        if (portalHostGeneration.current !== generation) return
+        if (pills.current.parentNode === host) pills.current.remove()
+        if (detail.current.parentNode === host) detail.current.remove()
+      })
     }
   }, [host, portals])
 
@@ -1660,12 +1687,12 @@ export function RoomPillsLayer3D({
     layer.settle(placed, (pointer) => pick3D(entries, anchors, pointer, camera, level, size))
   })
 
-  if (entries.length === 0 || !portals) return null
+  if (renderEntries.length === 0 || !portals) return null
   return (
     <PillPortalContext.Provider value={portals.pills}>
       <HiddenPillsContext.Provider value={gone}>
         <group matrixAutoUpdate={false} ref={ref}>
-          {entries.map((entry) => (
+          {renderEntries.map((entry) => (
             <Fragment key={entry.zoneId}>{renderLabel(entry, anchors, layer.elements)}</Fragment>
           ))}
           <Html
@@ -1708,14 +1735,17 @@ export function RoomLabelAnchor3D({
   useEffect(() => {
     anchors.set(entry.zoneId, position)
   }, [anchors, entry.zoneId, position])
-  if (gone.has(entry.zoneId)) return null
+  // Keep Drei's Html root mounted while a pill is temporarily hidden.
+  // Conditionally returning null makes Html tear down its internally managed
+  // React root during a parent render. Hide the wrapper instead.
+  const hidden = gone.has(entry.zoneId)
   return (
     <Html
       center
       portal={portal ?? undefined}
       position={position}
       // The wrapper lets the canvas keep everything but the pill itself.
-      style={{ pointerEvents: 'none' }}
+      style={{ pointerEvents: 'none', display: hidden ? 'none' : undefined }}
       zIndexRange={[20, 0]}
     >
       {children}
